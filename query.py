@@ -26,7 +26,12 @@ PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}\.\d{2})\s*公布")
 
 
 async def goto_home(page: Page) -> None:
-    await page.goto(BASE_URL + "/", wait_until="domcontentloaded")
+    try:
+        # Increase timeout to 60s
+        await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=60000)
+    except Exception as e:
+        print(f"Warning: First attempt to open homepage failed: {e}. Retrying...")
+        await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=60000)
 
 
 async def search_by_title(page: Page, keyword: str) -> None:
