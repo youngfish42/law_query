@@ -159,11 +159,42 @@ async def click_load_more_until_done(
 
 
 def write_csv(path: Path, rows: Iterable[Record]) -> None:
+    # 读取已有数据进行合并
+    merged_map = {}
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # 构造 Record 对象，处理可能缺失的字段
+                    r = Record(
+                        category=row.get("category", ""),
+                        title=row.get("title", ""),
+                        url=row.get("url", ""),
+                        publish_date=row.get("publish_date", ""),
+                    )
+                    if r.url:
+                        merged_map[r.url] = r
+        except Exception as e:
+            print(f"Warning: Failed to read existing CSV for merging: {e}")
+
+    # 合并新查询到的数据（优先使用新数据）
+    for r in rows:
+        merged_map[r.url] = r
+
+    # 按 publish_date 降序排序（由新到旧）
+    sorted_records = sorted(
+        merged_map.values(),
+        key=lambda x: x.publish_date,
+        reverse=True
+    )
+
+    # 写回文件
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=["category", "title", "url", "publish_date"])
         w.writeheader()
-        for r in rows:
+        for r in sorted_records:
             w.writerow(asdict(r))
 
 
