@@ -1,4 +1,4 @@
-# pkulaw_query
+# law_query
 
 进行检索并查询法律法规结果列表（标题、URL、公布日期）。
 

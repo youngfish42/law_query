@@ -90,11 +90,12 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
 
         a = col.locator(".t h4 a").first
         try:
-            title = (await a.inner_text(timeout=10000)).strip()
+            title = (await a.inner_text(timeout=5000)).strip()
+            href = await a.get_attribute("href", timeout=5000)
         except Exception as e:
-            print(f"元素未找到或超时: {e}")
-            title = ""
-        href = await a.get_attribute("href")
+            print(f"Skipping invalid record (title/href missing): {e}")
+            continue
+
         if not href:
             continue
         url = href if href.startswith("http") else (BASE_URL + href)
