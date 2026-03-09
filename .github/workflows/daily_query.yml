@@ -1,0 +1,48 @@
+name: Daily Query
+
+on:
+  schedule:
+    # Beijing 07:00 is UTC 23:00 (previous day)
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+    inputs:
+      keyword:
+        description: 'Search keyword'
+        required: false
+        default: '智能'
+
+jobs:
+  query:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          playwright install --with-deps chromium
+
+      - name: Run query
+        run: |
+          DATE=$(date +%Y%m%d)
+          # Use input keyword if triggered manually, otherwise default to '智能'
+          KEYWORD="${{ inputs.keyword }}"
+          if [ -z "$KEYWORD" ]; then
+            KEYWORD="智能"
+          fi
+          
+          echo "Searching for: $KEYWORD"
+          python query.py --keyword "$KEYWORD" --out "results_${DATE}.csv"
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-results
+          path: results_*.csv
