@@ -54,24 +54,107 @@ async def switch_category(page: Page, category: str) -> None:
     # category: "central" | "local"
     text = "中央法规" if category == "central" else "地方法规"
 
-    # 顶部分类 tab（中央法规/地方法规）。
-    # 页面里可能存在多个同文本链接，但“分类 tab”通常位于页面顶部且可见。
-    tab = page.locator(f'a:has-text("{text}")').first
-    await tab.wait_for(state="visible", timeout=30000)
-    await tab.click()
+    # Iterate through links to find the one that preserves the search session (contains "Keywords" or similar)
+    # The global nav link usually points to /chl or /lar without query params.
+    # The search tab usually points to /s?Keywords=...
+    links = page.locator(f'a:has-text("{text}")')
+    count = await links.count()
+    
+    target_link = None
+    for i in range(count):
+        link = links.nth(i)
+        if not await link.is_visible():
+            continue
+            
+        href = await link.get_attribute("href")
+        if href and ("Keywords" in href or "search" in href.lower() or "javascript" in href.lower()):
+            # This looks like the correct tab
+            target_link = link
+            break
+    
+    if target_link:
+        await target_link.click()
+    else:
+        # Fallback: Check if the first/second link is safe. 
+        # Often the first is global nav (unsafe), second is tab (safe).
+        print(f"Warning: Specific search tab for {text} not found by heuristic. Checking candidates...")
+        for i in range(count):
+             lk = links.nth(i)
+             if not await lk.is_visible(): continue
+             href = await lk.get_attribute("href") or ""
+             # If href is exactly the base category URL, it's a reset. Skip it.
+             # e.g. /chl/ or /lar/ or http://.../chl/
+             if href.rstrip('/').endswith(("/chl", "/lar")):
+                 print(f"Skipping link {href} as it looks like a global navigation reset.")
+                 continue
+             
+             # If it's not a reset, it might be the tab.
+             print(f"Clicking fallback link: {href}")
+             await lk.click()
+             break
 
     # 等待列表刷新
     await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
 
 
 async def apply_this_month_effective_filter(page: Page) -> None:
-    # 左侧“相关提示”里点击 “本月生效 (xxx)”
-    # 不同页面 id 会变化，但 title 文本稳定
-    link = page.locator('a[title^="本月生效"]')
-    await link.first.wait_for(state="visible", timeout=30000)
-    await link.first.click()
+    # Look for "This Month Effective" in the filter section specifically.
+    # Avoid global "New Laws" or sidebar promos that reset search.
+    # Search filters usually have "Keywords" in the href or appear in a specific facet list.
+    
+    link_locator = page.locator('a[title^="本月生效"]')
+    count = await link_locator.count()
+    
+    target_link = None
+    for i in range(count):
+        link = link_locator.nth(i)
+        if not await link.is_visible():
+            continue
+            
+        href = await link.get_attribute("href")
+        # Same heuristic: must look like a filter for the current search
+        # Usually contains "Keywords" or is a javascript postback for the filter.
+        # Links to purely /chl/ or /lar/xxxx without params are suspicious.
+        if href and ("Keywords" in href or "search/result" in href or "javascript" in href.lower()):
+            target_link = link
+            break
+            
+    # If the user's intent is to find strictly *Effective This Month* + *Keyword*, we should rely on the search bar first.
+    # The current page context should already contain the keyword.
+    # If correct filtering is successful, we should see the facet.
+    # If filtering fails, we might just return all results and filter in python.
+    
+    # We will try to click, but be defensive about it.
+    link_loc = page.locator('a[title^="本月生效"]')
+    cnt = await link_loc.count()
+    clicked = False
+    
+    for i in range(cnt):
+        lk = link_loc.nth(i)
+        if not await lk.is_visible():
+            continue
+        href = await lk.get_attribute("href") or ""
+        # Only click if it's a search refinement (contains Keywords or is JS/empty anchor)
+        # Avoid clicking absolute paths to /chl/ or /lar/ main pages.
+        if "Keywords" in href or "javascript" in href or href == "#":
+            try:
+                await lk.click(timeout=5000)
+                clicked = True
+                break
+            except Exception:
+                pass
+    
+    if clicked:
+        # Wait for "This Month Effective" in the search criteria bar
+        try:
+            await page.locator("text=本月生效").first.wait_for(timeout=10000)
+        except:
+             print("Warning: 'This Month Effective' filter might not have applied correctly.")
+    else:
+        print("Skipping 'This Month Effective' UI filter to prevent search reset.")
 
-    # 等待“检索条件”区域显示“本月生效”
+
+async def extract_visible_records(page: Page, category: str) -> List[Record]:
     await page.locator("text=本月生效").first.wait_for(timeout=30000)
     await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
 
