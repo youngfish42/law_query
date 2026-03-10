@@ -20,6 +20,8 @@ class Record:
     title: str
     url: str
     publish_date: str  # YYYY.MM.DD
+    law_type: str = ""  # 效力级别 / 法规类别, e.g. 法律, 行政法规, 部门规章
+    publishing_agency: str = ""  # 发布部门 / 颁布机关, e.g. 全国人民代表大会常务委员会
 
 
 PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}\.\d{2})\s*公布")
@@ -222,7 +224,31 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
             # print(f"Skipping record {title} - Date {date_to_check} not in {current_month}")
             continue
 
-        out.append(Record(category=category, title=title, url=url, publish_date=date_to_check))
+        # Extract law_type (效力级别 / 法规类别)
+        # Values such as 法律/行政法规/部门规章 never contain spaces, so [^\s…]+ is correct.
+        law_type = ""
+        m_law_type = re.search(r"(?:效力级别|法规类[型别])[:：]\s*([^\s\u3000\u00a0，,；;\n\r\t]+)", text)
+        if m_law_type:
+            law_type = m_law_type.group(1).strip()
+
+        # Extract publishing_agency (发布部门 / 颁布机关 etc.)
+        # Fields in the info section are separated by two or more spaces, tabs, or newlines.
+        publishing_agency = ""
+        m_agency = re.search(
+            r"(?:发布(?:部门|机构|机关)|颁布机关|制定机关)[:：]\s*(.+?)(?=\s{2,}|\t|\n|\r|$)",
+            text,
+        )
+        if m_agency:
+            publishing_agency = m_agency.group(1).strip()
+
+        out.append(Record(
+            category=category,
+            title=title,
+            url=url,
+            publish_date=date_to_check,
+            law_type=law_type,
+            publishing_agency=publishing_agency,
+        ))
 
 
     return out
@@ -301,6 +327,8 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                         title=row.get("title", ""),
                         url=row.get("url", ""),
                         publish_date=row.get("publish_date", ""),
+                        law_type=row.get("law_type", ""),
+                        publishing_agency=row.get("publishing_agency", ""),
                     )
                     if r.url:
                         merged_map[r.url] = r
@@ -321,7 +349,7 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
     # 写回文件
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8-sig") as f:
-        w = csv.DictWriter(f, fieldnames=["category", "title", "url", "publish_date"])
+        w = csv.DictWriter(f, fieldnames=["category", "title", "url", "publish_date", "law_type", "publishing_agency"])
         w.writeheader()
         for r in sorted_records:
             w.writerow(asdict(r))
