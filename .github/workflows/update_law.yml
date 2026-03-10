@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 0 * * *' # 每天 UTC 0:00 (北京时间 8:00) 运行
   workflow_dispatch:      # 允许手动触发
+    inputs:
+      keyword:
+        description: '检索关键词 (默认为 "智能")'
+        required: false
+        default: '智能'
 
 permissions:
   contents: write
@@ -23,13 +28,19 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           playwright install --with-deps chromium
 
       - name: Run query script
         run: |
+          KEYWORD="${{ inputs.keyword }}"
+          if [ -z "$KEYWORD" ]; then
+            KEYWORD="智能"
+          fi
+          echo "Current keyword: $KEYWORD"
+
           # 运行查询脚本，默认参数即可（输出到 法规.csv）
-          python query.py
+          python query.py --keyword "$KEYWORD" --out "法规.csv"
           
       - name: Generate Update Time
         run: |
@@ -41,6 +52,19 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add 法规.csv meta.json
-          # 如果没有变化则不报错
-          git commit -m "Auto-update law data and timestamp" || echo "No changes to commit"
-          git push
+          
+          # Check for staged changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Auto-update law data and timestamp"
+            git push
+          fi
+      
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-results
+          path: |
+            法规.csv
+            meta.json
