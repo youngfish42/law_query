@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>法规查询结果</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        h1 { text-align: center; }
+        .timestamp { text-align: center; color: #666; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .pagination { text-align: center; margin-top: 20px; }
+        .pagination button { padding: 5px 10px; margin: 0 5px; cursor: pointer; }
+        .pagination button:disabled { background-color: #eee; cursor: not-allowed; }
+        a { text-decoration: none; color: #007bff; }
+        a:hover { text-decoration: underline; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+    <h1>最新法规列表</h1>
+    <div class="timestamp" id="timestamp">加载中...</div>
+    
+    <table id="lawTable">
+        <thead>
+            <tr>
+                <th>分类</th>
+                <th>标题</th>
+                <th>公布/生效日期</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Data will be inserted here -->
+        </tbody>
+    </table>
+
+    <div class="pagination" id="pagination">
+        <button id="prevBtn" onclick="changePage(-1)">上一页</button>
+        <span id="pageInfo">第 1 页</span>
+        <button id="nextBtn" onclick="changePage(1)">下一页</button>
+    </div>
+
+    <script>
+        let allData = [];
+        let currentPage = 1;
+        const itemsPerPage = 50;
+
+        async function init() {
+            // Load timestamp
+            try {
+                const metaResponse = await fetch('meta.json');
+                if (metaResponse.ok) {
+                    const meta = await metaResponse.json();
+                    document.getElementById('timestamp').textContent = `更新时间：${meta.updated_at} (北京时间)`;
+                } else {
+                    document.getElementById('timestamp').textContent = '更新时间未知';
+                }
+            } catch (e) {
+                console.error("Failed to load meta.json", e);
+                document.getElementById('timestamp').textContent = '更新时间获取失败';
+            }
+
+            // Load CSV
+            Papa.parse('法规.csv', {
+                download: true,
+                header: true,
+                complete: function(results) {
+                    allData = results.data.filter(row => row.url); // Filter out empty rows
+                    renderTable();
+                },
+                error: function(err) {
+                    console.error("Failed to load CSV", err);
+                    document.querySelector('tbody').innerHTML = '<tr><td colspan="3">加载数据失败</td></tr>';
+                }
+            });
+        }
+
+        function renderTable() {
+            const tbody = document.querySelector('#lawTable tbody');
+            tbody.innerHTML = '';
+
+            const start = (currentPage - 1) * itemsPerPage;
+            const end = start + itemsPerPage;
+            const pageData = allData.slice(start, end);
+
+            if (pageData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3">无数据</td></tr>';
+                return;
+            }
+
+            pageData.forEach(row => {
+                const tr = document.createElement('tr');
+                // category, title, url, publish_date
+                tr.innerHTML = `
+                    <td>${row.category || ''}</td>
+                    <td><a href="${row.url}" target="_blank">${row.title || '无标题'}</a></td>
+                    <td>${row.publish_date || ''}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Update pagination controls
+            document.getElementById('pageInfo').textContent = `第 ${currentPage} 页 / 共 ${Math.ceil(allData.length / itemsPerPage)} 页`;
+            document.getElementById('prevBtn').disabled = currentPage === 1;
+            document.getElementById('nextBtn').disabled = end >= allData.length;
+        }
+
+        function changePage(delta) {
+            currentPage += delta;
+            renderTable();
+            window.scrollTo(0, 0); 
+        }
+
+        init();
+    </script>
+</body>
+</html>

@@ -17,7 +17,25 @@
 
 ```bash
 pip install -r requirements.txt
-python -m playwright install chromium
+
+## GitHub Pages 部署
+
+本项目包含自动更新 GitHub Pages 的功能。
+
+1.  **启用 GitHub Pages**：
+    - 进入仓库 **Settings** -> **Pages**。
+    - 在 **Source** 下选择 **Deploy from a branch**。
+    - 在 **Branch** 下选择 `main` 分支（或你当前的分支），文件夹选择 `/ (root)`。
+    - 点击 **Save**。
+
+2.  **自动更新**：
+    - GitHub Actions 会在每天北京时间 08:00 自动运行查询脚本。
+    - 若有新法规，`法规.csv` 会被更新，网页也会随之更新。
+    - 你也可以在 **Actions** 标签页手动运行 "Update Law Query Data" 工作流。
+
+3.  **访问网页**：
+    -设置完成后，网页地址通常为 `https://<你的用户名>.github.io/law_query/`。
+
 ```
 
 ## 快速运行

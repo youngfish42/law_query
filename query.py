@@ -279,7 +279,7 @@ async def click_load_more_until_done(
             break
 
         # 等待新内容加载：recordList 数量变化或稍等
-        await page.wait_for_timeout(2000) # 增加到2秒以便AJAX加载
+        await page.wait_for_timeout(20000) # 增加到20秒以便AJAX加载
         added = await collect_once()
         print(f"更多加载: +{added} 条记录")
 

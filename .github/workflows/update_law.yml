@@ -1,0 +1,46 @@
+name: Update Law Query Data
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天 UTC 0:00 (北京时间 8:00) 运行
+  workflow_dispatch:      # 允许手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Run query script
+        run: |
+          # 运行查询脚本，默认参数即可（输出到 法规.csv）
+          python query.py
+          
+      - name: Generate Update Time
+        run: |
+          # 生成 meta.json 包含北京时间
+          python -c "import json; from datetime import datetime, timedelta, timezone; tz = timezone(timedelta(hours=8)); now = datetime.now(tz).strftime('%Y-%m-%d %H:%M'); print(json.dumps({'updated_at': now}, ensure_ascii=False))" > meta.json
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add 法规.csv meta.json
+          # 如果没有变化则不报错
+          git commit -m "Auto-update law data and timestamp" || echo "No changes to commit"
+          git push
