@@ -17,7 +17,6 @@ BASE_URL = "https://www.pkulaw.com"
 @dataclass
 class Record:
     category: str  # "central" | "local"
-    sub_category: str # Specific category from sidebar, e.g. "法律", "行政法规"
     title: str
     url: str
     publish_date: str  # YYYY.MM.DD
@@ -153,7 +152,7 @@ async def apply_this_month_effective_filter(page: Page) -> None:
         print("Warning: 'This Month Effective' filter link not found or not clickable.")
 
 
-async def extract_visible_records(page: Page, category: str, sub_category: str) -> List[Record]:
+async def extract_visible_records(page: Page, category: str) -> List[Record]:
     # 每条记录通常在 div.col 下，含 div.t(h4>a) + div.info(含日期)
     cols = page.locator("div.col")
     n = await cols.count()
@@ -223,7 +222,7 @@ async def extract_visible_records(page: Page, category: str, sub_category: str) 
             # print(f"Skipping record {title} - Date {date_to_check} not in {current_month}")
             continue
 
-        out.append(Record(category=category, sub_category=sub_category, title=title, url=url, publish_date=date_to_check))
+        out.append(Record(category=category, title=title, url=url, publish_date=date_to_check))
 
 
     return out
@@ -233,13 +232,12 @@ async def click_load_more_until_done(
     page: Page,
     seen_keys: set,
     category: str,
-    sub_category: str,
     max_items: int,
 ) -> List[Record]:
     results: List[Record] = []
 
     async def collect_once() -> int:
-        recs = await extract_visible_records(page, category, sub_category)
+        recs = await extract_visible_records(page, category)
         added = 0
         for r in recs:
             key = (r.url or "")
@@ -257,16 +255,13 @@ async def click_load_more_until_done(
 
         # 页面上有很多“更多”，我们只点列表区域里带 icon 的“更多”按钮
         more = page.locator('a:has(i.c-icon):has-text("更多")').last
-        # Wait for "More" to be strictly visible or enabled
-        if await more.count() == 0 or not await more.is_visible():
+
+        if await more.count() == 0:
             break
 
-        print("Clicking 'More'...")
         try:
             await more.scroll_into_view_if_needed()
-            await more.click(timeout=5000)
-            # User wants 10s pause?
-            await page.wait_for_timeout(10000)
+            await more.click(timeout=3000)
         except Exception:
             # 没有更多了 / 按钮不可点击
             break
@@ -292,134 +287,6 @@ async def click_load_more_until_done(
     return results
 
 
-async def iterate_sub_categories(
-    page: Page,
-    main_category: str,
-    max_items: int,
-) -> List[Record]:
-    """
-    Look for effectiveness level / category facets on the sidebar, iterate through them,
-    and rescue records.
-    """
-    found_records: List[Record] = []
-    
-    # 策略：
-    # 1. 识别左侧所有可能的一级分类 (Class Name + Count)
-    # 2. 依次点击 -> 抓取 -> 回到上一状态（或者继续点下一个）
-    
-    # 获取所有符合 "Text(Number)" 格式的链接
-    # 注意：可能会抓到太多无关的。我们需要聚焦。
-    # 通常分类在特定的 block 里，比如 "效力级别" (Central) 或 "文件类型" (Local)
-    # 这里我们尝试通过文本定位标题，然后找该标题下的列表。
-    # 由于页面结构未知，我们尝试普遍撒网但根据关键词过滤。
-    
-    # 等待链接加载
-    try:
-        await page.wait_for_selector("a", state="attached", timeout=10000)
-    except:
-        pass
-        
-    links = page.locator("a")
-    count = await links.count()
-    
-    targets = [] # List of (name, count) tuples
-    check_pattern = re.compile(r"^(.+?)[（\(](\d+)[）\)]$")
-    
-    print(" scanning sidebar for sub-categories...")
-    
-    # 收集阶段
-    for i in range(count):
-        lk = links.nth(i)
-        if not await lk.is_visible():
-            continue
-            
-        txt = (await lk.inner_text()).strip()
-        m = check_pattern.match(txt)
-        if m:
-            name = m.group(1).strip()
-            # 过滤逻辑
-            if re.match(r"^\d{4}$", name): continue # 年份
-            if "更多" in name or "全部" in name: continue
-            if "收起" in name: continue
-            if len(name) > 20: continue # 名字太长可能不是分类
-            
-            # 排除本身是 "中央法规" "地方法规" 的大类导航
-            if name in ["中央法规", "地方法规", "法律法规", "司法解释"]:
-                 # 这些可能是顶级类，点击会重置或者进入子页，我们保留，
-                 # 但是如果在左侧树状结构里，它们通常是父节点。
-                 # 如果我们已经在 "Central" 页面，也许只需要点 "法律", "行政法规"...
-                 pass
-            
-            # 保存名字，后续点击时重新定位
-            if name not in [t[0] for t in targets]:
-                targets.append((name, int(m.group(2))))
-
-    print(f"Potential sub-categories found: {targets}")
-    
-    if not targets:
-        print("No sub-categories found. Scraping current list.")
-        return await click_load_more_until_done(
-            page, set(), main_category, "", max_items
-        )
-
-    # 遍历阶段
-    all_collected_urls = set()
-    
-    for cat_name, cat_count in targets:
-        print(f"\n>>> Processing Sub-Category: {cat_name} (Count: {cat_count})")
-        
-        # 重新寻找并点击链接
-        clicked = False
-        page_links = page.locator("a")
-        cnt = await page_links.count()
-        
-        for i in range(cnt):
-            lk = page_links.nth(i)
-            if await lk.is_visible():
-                txt = (await lk.inner_text()).strip()
-                # 必须完全匹配之前发现的名字部分 (忽略数字变化，或者不忽略)
-                # 最好使用 startswith
-                if txt.startswith(cat_name) and "(" in txt:
-                    try:
-                        await lk.scroll_into_view_if_needed()
-                        await lk.click()
-                        clicked = True
-                        break
-                    except Exception as e:
-                        print(f"Failed to click {cat_name}: {e}")
-                        
-        if not clicked:
-            print(f"Skipping {cat_name}: Link not found/clickable.")
-            continue
-            
-        print("Waiting 10s for category load...")
-        await page.wait_for_timeout(10000)
-        
-        # 抓取当前分类下的所有每页
-        # 这里即使 URL 重复我们也抓取，因为要打上不同的 sub_category 标签
-        # (虽然通常一个法规只属于一个效力级别)
-        # 如果需要去重，可以在 write_csv时不覆盖 sub_category?
-        # 不，用户要的是 dimension。
-        
-        # 为了避免无限加载，我们只抓取当前分类的，不需要去重全局
-        cat_seen = set()
-        
-        recs = await click_load_more_until_done(
-            page, cat_seen, main_category, cat_name, max_items
-        )
-        
-        found_records.extend(recs)
-        
-        # 完成一个分类后，页面状态变了（被筛选了）。
-        # 点击下一个同级分类通常会取消当前、选中下一个。
-        # 如果点击失败，可能需要取消当前？
-        # 在 pkulaw 左侧，通常都是链接切换。
-        # 继续循环即可。如果是层级结构，可能需要 Back?
-        # 假设左侧栏始终可见。
-        
-    return found_records
-
-
 def write_csv(path: Path, rows: Iterable[Record]) -> None:
     # 读取已有数据进行合并
     merged_map = {}
@@ -431,7 +298,6 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                     # 构造 Record 对象，处理可能缺失的字段
                     r = Record(
                         category=row.get("category", ""),
-                        sub_category=row.get("sub_category", ""),
                         title=row.get("title", ""),
                         url=row.get("url", ""),
                         publish_date=row.get("publish_date", ""),
@@ -455,7 +321,7 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
     # 写回文件
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8-sig") as f:
-        w = csv.DictWriter(f, fieldnames=["category", "sub_category", "title", "url", "publish_date"])
+        w = csv.DictWriter(f, fieldnames=["category", "title", "url", "publish_date"])
         w.writeheader()
         for r in sorted_records:
             w.writerow(asdict(r))
@@ -518,17 +384,26 @@ async def run(
                 # Step 3: Search text
                 await search_by_title(page, keyword)
                 
-                # Step 4: Iterate categories form sidebar and collect
-                # This replaces the simple 'click_load_more_until_done'
+                # Step 4: Collect results
+                # We skip 'apply_this_month_effective_filter' because it's unreliable/resets search.
+                # If the user script MUST filter by 'Effective Date', we should scrape that date.
+                # However, scraping 'Effective Date' requires reading more detail from result list.
+                # Standard result item text often spans 'Publish Date' and 'Effective Date'.
                 
-                # Notice: search_by_title already waits for the result list.
-                # Now we look for sidebar categories and iterate them.
+                # We'll fetch a bit more items to increase chance of finding items
+                items_needed = max_items if max_items > 0 else 100 
                 
-                items_needed = max_items if max_items > 0 else 100
+                # Filter seen_keys global check?
+                # records from central vs local might overlap if search is global?
+                # If search is global, we get duplicates. 
+                # If tabs worked, we get distinct sets.
+                # Use a set to dedup.
                 all_seen_urls = set(r.url for r in all_records)
                 
-                # 使用改进后的 iterate_sub_categories
-                found_recs = await iterate_sub_categories(page, cat_key, items_needed)
+                found_recs = await click_load_more_until_done(page, all_seen_urls, cat_key, max_items=items_needed)
+                
+                # If we found NOTHING with keyword, maybe verify?
+                # But let's assume search returned OK.
                 
                 all_records.extend(found_recs)
                 print(f"Found {len(found_recs)} records for {cat_label}")
