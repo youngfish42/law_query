@@ -34,103 +34,70 @@ async def goto_home(page: Page) -> None:
         await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=60000)
 
 
+async def click_category_nav(page: Page, label: str) -> None:
+    """
+    在首页点击分类导航按钮（如“中央法规”、“地方法规”）。
+    由于页面加载慢，点击后等待较长时间。
+    """
+    print(f"Navigating to category: {label}")
+    
+    # 尝试找到准确文本的链接
+    # 首页通常有明显的 "中央法规" 链接
+    # 使用 a:text-is 或者 a:has-text，优先精确匹配
+    link = page.locator(f"a:has-text('{label}')").first
+    
+    # 为了防止点到不相关的链接，稍微过滤一下可见性
+    if await link.count() == 0:
+        print(f"Error: Link with text '{label}' not found.")
+        return
+
+    await link.wait_for(state="visible", timeout=30000)
+    await link.click()
+    
+    # 按照用户要求，每步操作后停顿10秒以上
+    print("Waiting 12s after clicking category...")
+    await page.wait_for_timeout(12000)
+    
+    # 注意：点击"中央法规"后，可能会跳转到 /chl 页面。
+    # 此时页面元素可能完全刷新，需要重新定位后续的搜索框。
+    # search_by_title 函数里会重新 locate 搜索框，所以这里不需要额外操作。
+
+
 async def search_by_title(page: Page, keyword: str) -> None:
+    print(f"Searching for: {keyword}")
     # 首页/结果页顶部都有同一个检索框
-    box = page.locator("#txtSearch")
+    box = page.locator("input#txtSearch")
     await box.wait_for(state="visible", timeout=30000)
     await box.fill(keyword)
+    
+    # 输入后稍作停顿
+    await page.wait_for_timeout(2000)
 
     # 点击“检索/新检索”按钮
-    # 页面上通常是 a#btnSearch（文本可能为 检索/新检索）
     btn = page.locator("a#btnSearch")
     await btn.wait_for(state="visible", timeout=30000)
     
-    # 获取操作前列表的第一条，用于检测列表刷新
-    old_item = page.locator('input[name="recordList"]').first
-    has_old = False
-    if await old_item.count() > 0:
-        has_old = True
-        # 尝试等待该特定元素消失（detached）
-        # 但因为这里是 Locator，我们需要它的唯一性，或者我们在点击后等待它消失
-        # 但如果新列表第一条和旧列表长得一样（HTML结构），Playwright Locator 可能会立即匹配到新元素
-        # 所以最好是简单等待一下网络空闲，或者特定的加载遮罩消失
-        pass
-
     await btn.click()
     
-    # 强制等待，因为 URL 不变且 DOM 变化可能需要时间 (AJAX)
-    # 没有可靠的特定元素只能等待
-    await page.wait_for_timeout(10000)
+    # 强制等待，因为网页加载很慢
+    print("Waiting 15s for search results to load...")
+    await page.wait_for_timeout(15000)
 
     # 等结果区域出现
-    await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
+    try:
+        await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
+    except:
+        print("Warning: Result list not detected (timeout).")
 
     # 简单验证结果
     first_title_loc = page.locator(".t h4 a").first
     try:
         if await first_title_loc.count() > 0:
              title = (await first_title_loc.inner_text(timeout=5000)).strip()
-             print(f"DEBUG: First result title: '{title}', Keyword: '{keyword}'")
+             print(f"DEBUG: First result title: '{title}'")
     except:
         pass
 
-
-async def switch_category(page: Page, category: str) -> None:
-    # category: "central" | "local"
-    text = "中央法规" if category == "central" else "地方法规"
-
-    # Iterate through links to find the one that preserves the search session (contains "Keywords" or similar)
-    # The global nav link usually points to /chl or /lar without query params.
-    # The search tab usually points to /s?Keywords=...
-    links = page.locator(f'a:has-text("{text}")')
-    count = await links.count()
-    
-    target_link = None
-    for i in range(count):
-        link = links.nth(i)
-        if not await link.is_visible():
-            continue
-            
-        href = await link.get_attribute("href")
-        if href and ("Keywords" in href or "search" in href.lower() or "javascript" in href.lower()):
-            # This looks like the correct tab
-            target_link = link
-            break
-    
-    clicked = False
-    if target_link:
-        await target_link.click()
-        clicked = True
-    else:
-        # Fallback: Check if the first/second link is safe. 
-        # Often the first is global nav (unsafe), second is tab (safe).
-        print(f"Warning: Specific search tab for {text} not found by heuristic. Checking candidates...")
-        for i in range(count):
-             lk = links.nth(i)
-             if not await lk.is_visible(): continue
-             href = await lk.get_attribute("href") or ""
-             # If href is exactly the base category URL, it's a reset. Skip it for search results page
-             # BUT here we are likely on Home Page, so clicking it is fine/desired.
-             # e.g. /chl/ or /lar/ or http://.../chl/
-             # if href.rstrip('/').endswith(("/chl", "/lar")):
-             #    print(f"Skipping link {href} as it looks like a global navigation reset.")
-             #    continue
-             
-             # If it's not a reset, it might be the tab.
-             print(f"Clicking fallback link: {href}")
-             await lk.click()
-             clicked = True
-             break
-    
-    if not clicked:
-        print(f"Error: Could not find link for category '{text}'. Aborting switch.")
-        return
-
-    # 等待列表刷新
-    try:
-        await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
-    except Exception as e:
-        print(f"Warning: filter list not found after switching category. This might be OK if there are no records. Error: {e}")
 
 
 async def apply_this_month_effective_filter(page: Page) -> None:
@@ -183,11 +150,6 @@ async def apply_this_month_effective_filter(page: Page) -> None:
         await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
     else:
         print("Warning: 'This Month Effective' filter link not found or not clickable.")
-
-
-async def extract_visible_records(page: Page, category: str) -> List[Record]:
-    await page.locator("text=本月生效").first.wait_for(timeout=30000)
-    await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
 
 
 async def extract_visible_records(page: Page, category: str) -> List[Record]:
@@ -410,16 +372,16 @@ async def run(
             for cat_key, cat_label in categories:
                 print(f"Processing Category: {cat_label} ({cat_key})")
                 
-                # Step 1: Go to Home (Reset state)
+                # Step 1: Go to Home
                 await goto_home(page)
+                # 首页加载完稍作等待
+                await page.wait_for_timeout(5000)
                 
                 # Step 2: Click Category Tab *BEFORE* Searching
-                # This ensures we are in the correct 'Library' scope if the tabs work that way.
-                await switch_category(page, cat_key)
-                
+                # As per user request: click "中央法规" or "地方法规" first
+                await click_category_nav(page, cat_label)
+
                 # Step 3: Search text
-                # Note: If 'Full Library Search' is checked by default, we might need to rely on 
-                # result filtering or hope the tab set the context.
                 await search_by_title(page, keyword)
                 
                 # Step 4: Collect results
