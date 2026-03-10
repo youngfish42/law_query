@@ -11,6 +11,9 @@ on:
         required: false
         default: '智能'
 
+permissions:
+  contents: write
+
 jobs:
   query:
     runs-on: ubuntu-latest
@@ -31,7 +34,6 @@ jobs:
 
       - name: Run query
         run: |
-          DATE=$(date +%Y%m%d)
           # Use input keyword if triggered manually, otherwise default to '智能'
           KEYWORD="${{ inputs.keyword }}"
           if [ -z "$KEYWORD" ]; then
@@ -39,10 +41,24 @@ jobs:
           fi
           
           echo "Searching for: $KEYWORD"
-          python query.py --keyword "$KEYWORD" --out "results_${DATE}.csv"
+          # Run query, outputting to "法规.csv" (will merge with existing)
+          python query.py --keyword "$KEYWORD" --out "法规.csv"
+
+      - name: Commit and push if changed
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add 法规.csv
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update 法规.csv with latest query results"
+            git push
+          fi
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: query-results
-          path: results_*.csv
+          path: 法规.csv

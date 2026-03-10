@@ -27,10 +27,10 @@ PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}\.\d{2})\s*公布")
 
 async def goto_home(page: Page) -> None:
     try:
-        # Increase timeout to 60s
+        # 增加超时时间到 60 秒
         await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=60000)
     except Exception as e:
-        print(f"Warning: First attempt to open homepage failed: {e}. Retrying...")
+        print(f"Warning: 第一次尝试打开主页失败: {e}. 重试中...")
         await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=60000)
 
 
@@ -39,7 +39,7 @@ async def click_category_nav(page: Page, label: str) -> bool:
     在首页点击分类导航按钮（如“中央法规”、“地方法规”）。
     由于页面加载慢，点击后等待较长时间。
     """
-    print(f"Navigating to category: {label}")
+    print(f"正在切换到分类: {label}")
     
     try:
         # 尝试找到准确文本的链接
@@ -49,26 +49,26 @@ async def click_category_nav(page: Page, label: str) -> bool:
         
         # 为了防止点到不相关的链接，稍微过滤一下可见性
         if await link.count() == 0:
-            print(f"Error: Link with text '{label}' not found.")
+            print(f"Error: 未找到文本为 '{label}' 的链接。")
             return False
 
         await link.wait_for(state="visible", timeout=30000)
         await link.click()
         
         # 按照用户要求，每步操作后停顿10秒以上
-        print("Waiting 12s after clicking category...")
+        print("点击分类后等待 12 秒...")
         await page.wait_for_timeout(12000)
 
         # 验证是否真的切换了? 
         # 简单起见，只要点击成功且没有报错，就认为成功。
         return True
     except Exception as e:
-        print(f"Error navigating to category '{label}': {e}")
+        print(f"切换到分类 '{label}' 时出错: {e}")
         return False
 
 
 async def search_by_title(page: Page, keyword: str) -> bool:
-    print(f"Searching for: {keyword}")
+    print(f"正在检索: {keyword} 关键词相关法规")
     try:
         # 首页/结果页顶部都有同一个检索框
         box = page.locator("input#txtSearch")
@@ -85,14 +85,14 @@ async def search_by_title(page: Page, keyword: str) -> bool:
         await btn.click()
         
         # 强制等待，因为网页加载很慢
-        print("Waiting 15s for search results to load...")
+        print("等待 15 秒加载搜索结果...")
         await page.wait_for_timeout(15000)
 
         # 等结果区域出现
         try:
             await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
         except Exception:
-            print("Warning: Result list not detected (timeout).")
+            print("Warning: 未检测到结果列表（超时）。")
             return False
 
         # 简单验证结果
@@ -100,14 +100,14 @@ async def search_by_title(page: Page, keyword: str) -> bool:
         try:
             if await first_title_loc.count() > 0:
                  title = (await first_title_loc.inner_text(timeout=5000)).strip()
-                 print(f"DEBUG: First result title: '{title}'")
+                 print(f"DEBUG: 第一条结果标题: '{title}'")
             return True
         except Exception:
             # 只要能看到 list 就认为成功，哪怕 title 读不到
             return True
             
     except Exception as e:
-        print(f"Error during search: {e}")
+        print(f"搜索过程中出错: {e}")
         return False
 
 
@@ -154,14 +154,14 @@ async def apply_this_month_effective_filter(page: Page) -> None:
                 clicked = True
                 break
             except Exception as e:
-                print(f"Failed to click visible filter link: {e}")
+                print(f"点击可见的过滤链接失败: {e}")
 
     if clicked:
         # 点击后等待刷新
         await page.wait_for_timeout(2000)
         await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
     else:
-        print("Warning: 'This Month Effective' filter link not found or not clickable.")
+        print("Warning: 未找到或无法点击 '本月生效' 过滤链接。")
 
 
 async def extract_visible_records(page: Page, category: str) -> List[Record]:
@@ -179,13 +179,13 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
         a = col.locator(".t h4 a").first
         try:
             title = (await a.inner_text(timeout=5000)).strip()
-            # If the user keyword is provided, assume it's mandatory for validity check
-            # unless the search failed, but if search succeeded, the keyword *should* be in title most times.
-            # But sometimes it's in content only. However, if the result is completely off-topic (like "2026 Bond"), the search definitely failed.
-            # But we can't be too strict here. "智能" might be in content.
+            # 如果提供了用户关键字，通常假设它是校验有效性的必要条件
+            # 除非搜索失败，但如果搜索成功，关键字应该在标题中。
+            # 但有时它只在内容中。然而，如果结果完全不相关（如“2026 债券”），则搜索肯定失败了。
+            # 但这里不能太严格。“智能”可能在正文中。
             href = await a.get_attribute("href", timeout=5000)
         except Exception as e:
-            print(f"Skipping invalid record (title/href missing): {e}")
+            print(f"跳过无效记录 (缺少标题/链接): {e}")
             continue
 
         if not href:
@@ -197,41 +197,41 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
             info_text = await col.locator(".info").inner_text()
             text += " " + info_text
             
-        # Parse Dates
+        # 解析日期
         publish_date = ""
         effective_date = ""
         
-        # Regex for Publish Date "YYYY.MM.DD 公布"
+        # 匹配公布日期 "YYYY.MM.DD 公布"
         m_pub = PUBLISH_RE.search(text)
         if m_pub:
             publish_date = m_pub.group(1)
             
-        # Regex for Effective Date "YYYY.MM.DD 实施" or similar
-        # If not labeled, we might guess if there's another date.
-        # But let's look for "实施" or "生效"
+        # 匹配实施日期 "YYYY.MM.DD 实施" 或类似
+        # 如果没有标签，我们可能猜测是否有另一个日期。
+        # 但我们找 "实施" 或 "生效"
         m_eff = re.search(r"(\d{4}\.\d{2}\.\d{2})\s*(?:实施|生效|施行)", text)
         if m_eff:
             effective_date = m_eff.group(1)
         
-        # Fallback: if no labeled date, just find any date?
+        # 备选：如果没有标注日期，随便找个日期？
         if not publish_date and not effective_date:
              date_m = re.search(r"(\d{4}\.\d{2}\.\d{2})", text)
              if date_m:
-                 publish_date = date_m.group(1) # Assume first date found is publish date
+                 publish_date = date_m.group(1) # 假设找到的第一个日期是公布日期
         
-        # If user wants "Effective This Month", we check against effective_date if found, else publish_date.
-        # Current month prefix
+        # 如果用户想要“本月生效”，我们检查 effective_date（如果找到），否则检查 publish_date。
+        # 当前月份前缀
         current_month = datetime.now().strftime("%Y.%m")
         
-        # Strict Filtering Logic:
-        # If effective_date is available, check it.
-        # If not, check publish_date (often same month).
-        # We only return records that match "This Month"
+        # 严格过滤逻辑：
+        # 如果有生效日期，检查它。
+        # 如果没有，检查公布日期（通常是同一个月）。
+        # 我们只返回匹配“本月”的记录
         
         date_to_check = effective_date if effective_date else publish_date
         if not date_to_check.startswith(current_month):
-            # Record is not from this month. Skip it.
-            # print(f"Skipping record {title} - Date {date_to_check} not in {current_month}")
+            # 记录不是本月的。跳过。
+            print(f"跳过记录 {title} - 日期 {date_to_check} 不在 {current_month} 中")
             continue
 
         out.append(Record(category=category, title=title, url=url, publish_date=date_to_check))
@@ -279,14 +279,14 @@ async def click_load_more_until_done(
             break
 
         # 等待新内容加载：recordList 数量变化或稍等
-        await page.wait_for_timeout(2000) # Increased to 2s to allow AJAX load
+        await page.wait_for_timeout(2000) # 增加到2秒以便AJAX加载
         added = await collect_once()
-        print(f"Loaded more: +{added} records")
+        print(f"更多加载: +{added} 条记录")
 
         # 如果本轮没有新增，认为加载结束，避免死循环
         #（网站可能返回同一批内容）
         if added == 0:
-            # Maybe retry once?
+            # 也许重试一次？
             await page.wait_for_timeout(2000)
             added = await collect_once()
             if added == 0:
@@ -317,7 +317,7 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                     if r.url:
                         merged_map[r.url] = r
         except Exception as e:
-            print(f"Warning: Failed to read existing CSV for merging: {e}")
+            print(f"Warning: 读取现有CSV合并失败: {e}")
 
     # 合并新查询到的数据（优先使用新数据）
     for r in rows:
@@ -374,61 +374,61 @@ async def run(
         try:
             all_records: List[Record] = []
             
-            # Use current month for python-side filtering
+            # 使用当月作为Python端过滤
             current_month_prefix = datetime.now().strftime("%Y.%m")
-            print(f"Target Month: {current_month_prefix}")
+            print(f"目标月份: {current_month_prefix}")
 
-            # Define the categories and their labels to match tabs
+            # 定义分类及其标签以匹配标签页
             categories = [("central", "中央法规"), ("local", "地方法规")]
             
             for cat_key, cat_label in categories:
-                print(f"Processing Category: {cat_label} ({cat_key})")
+                print(f"正在处理分类: {cat_label} ({cat_key})")
                 
-                # Step 1: Go to Home
+                # 第一步: 进入首页
                 await goto_home(page)
                 # 首页加载完稍作等待
                 await page.wait_for_timeout(5000)
                 
-                # Step 2: Click Category Tab *BEFORE* Searching
+                # 第二步: 搜索前点击分类标签
                 # "中央法规"无需点击，首页默认即是；"地方法规"需要点击切换
                 if cat_key == "local":
                     nav_ok = await click_category_nav(page, cat_label)
                     if not nav_ok:
-                        print(f"Skipping category '{cat_label}': Navigation failed.")
+                        print(f"跳过分类 '{cat_label}': 导航失败。")
                         continue
                 else:
-                    print(f"Category '{cat_label}' is default. Skipping navigation.")
+                    print(f"分类 '{cat_label}' 是默认分类。跳过导航。")
 
-                # Step 3: Search text
-                # Only if navigation succeeded
+                # 第三步: 搜索文本
+                # 仅当导航成功后
                 search_ok = await search_by_title(page, keyword)
                 if not search_ok:
-                    print(f"Skipping category '{cat_label}': Search failed.")
+                    print(f"跳过分类 '{cat_label}': 搜索失败。")
                     continue
                 
-                # Step 4: Collect results
-                # We skip 'apply_this_month_effective_filter' because it's unreliable/resets search.
-                # If the user script MUST filter by 'Effective Date', we should scrape that date.
-                # However, scraping 'Effective Date' requires reading more detail from result list.
-                # Standard result item text often spans 'Publish Date' and 'Effective Date'.
+                # 第四步: 收集结果
+                # 我们跳过 'apply_this_month_effective_filter' 以为它不可靠/重置搜索。
+                # 如果用户脚本必须按 '生效日期' 过滤，我们应该抓取该日期。
+                # 然而，抓取 '生效日期' 需要从结果列表中读取更多细节。
+                # 标准结果项文本通常跨越 '公布日期' 和 '生效日期'。
                 
-                # We'll fetch a bit more items to increase chance of finding items
+                # 我们多抓取一些项目以增加找到匹配项的几率
                 items_needed = max_items if max_items > 0 else 100 
                 
-                # Filter seen_keys global check?
+                # 过滤全局已见的键?
                 # records from central vs local might overlap if search is global?
-                # If search is global, we get duplicates. 
-                # If tabs worked, we get distinct sets.
-                # Use a set to dedup.
+                # 如果搜索是全局的，我们会得到重复项。
+                # 如果标签有效，我们将得到不同的集合。
+                # 使用集合去重。
                 all_seen_urls = set(r.url for r in all_records)
                 
                 found_recs = await click_load_more_until_done(page, all_seen_urls, cat_key, max_items=items_needed)
                 
-                # If we found NOTHING with keyword, maybe verify?
-                # But let's assume search returned OK.
+                # 如果关键字没有找到任何内容，也许验证一下？
+                # 但让我们假设搜索返回正常。
                 
                 all_records.extend(found_recs)
-                print(f"Found {len(found_recs)} records for {cat_label}")
+                print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
                 
             # 输出
             write_csv(out_csv, all_records)
@@ -441,9 +441,9 @@ async def run(
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Query pkulaw.com search results with interactive filtering")
+    ap = argparse.ArgumentParser(description="查询法规信息并带交互式过滤")
     ap.add_argument("--keyword", default="智能", help="检索词（默认：智能）")
-    ap.add_argument("--out", default="results.csv", help="输出 CSV 路径")
+    ap.add_argument("--out", default="法规.csv", help="输出 CSV 路径")
     ap.add_argument("--out-json", default=None, help="输出 JSON 路径（可选）")
 
     g = ap.add_mutually_exclusive_group()
@@ -479,10 +479,10 @@ def main() -> None:
         )
     )
 
-    print(f"Done. Total records: {len(records)}")
-    print(f"CSV: {out_csv.resolve()}")
+    print(f"完成。总记录数: {len(records)}")
+    print(f"CSV文件: {out_csv.resolve()}")
     if out_json:
-        print(f"JSON: {out_json.resolve()}")
+        print(f"JSON文件: {out_json.resolve()}")
 
 
 if __name__ == "__main__":
