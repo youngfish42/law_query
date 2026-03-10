@@ -60,7 +60,7 @@ async def search_by_title(page: Page, keyword: str) -> None:
     
     # 强制等待，因为 URL 不变且 DOM 变化可能需要时间 (AJAX)
     # 没有可靠的特定元素只能等待
-    await page.wait_for_timeout(3000)
+    await page.wait_for_timeout(10000)
 
     # 等结果区域出现
     await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
@@ -97,8 +97,10 @@ async def switch_category(page: Page, category: str) -> None:
             target_link = link
             break
     
+    clicked = False
     if target_link:
         await target_link.click()
+        clicked = True
     else:
         # Fallback: Check if the first/second link is safe. 
         # Often the first is global nav (unsafe), second is tab (safe).
@@ -107,61 +109,28 @@ async def switch_category(page: Page, category: str) -> None:
              lk = links.nth(i)
              if not await lk.is_visible(): continue
              href = await lk.get_attribute("href") or ""
-             # If href is exactly the base category URL, it's a reset. Skip it.
+             # If href is exactly the base category URL, it's a reset. Skip it for search results page
+             # BUT here we are likely on Home Page, so clicking it is fine/desired.
              # e.g. /chl/ or /lar/ or http://.../chl/
-             if href.rstrip('/').endswith(("/chl", "/lar")):
-                 print(f"Skipping link {href} as it looks like a global navigation reset.")
-                 continue
+             # if href.rstrip('/').endswith(("/chl", "/lar")):
+             #    print(f"Skipping link {href} as it looks like a global navigation reset.")
+             #    continue
              
              # If it's not a reset, it might be the tab.
              print(f"Clicking fallback link: {href}")
              await lk.click()
+             clicked = True
              break
+    
+    if not clicked:
+        print(f"Error: Could not find link for category '{text}'. Aborting switch.")
+        return
 
     # 等待列表刷新
-    await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
-         
-    # Iterate through links to find the one that preserves the search session (contains "Keywords" or similar)
-    # The global nav link usually points to /chl or /lar without query params.
-    # The search tab usually points to /s?Keywords=...
-    links = page.locator(f'a:has-text("{text}")')
-    count = await links.count()
-    
-    target_link = None
-    for i in range(count):
-        link = links.nth(i)
-        if not await link.is_visible():
-            continue
-            
-        href = await link.get_attribute("href")
-        if href and ("Keywords" in href or "search" in href.lower() or "javascript" in href.lower()):
-            # This looks like the correct tab
-            target_link = link
-            break
-    
-    if target_link:
-        await target_link.click()
-    else:
-        # Fallback: Check if the first/second link is safe. 
-        # Often the first is global nav (unsafe), second is tab (safe).
-        print(f"Warning: Specific search tab for {text} not found by heuristic. Checking candidates...")
-        for i in range(count):
-             lk = links.nth(i)
-             if not await lk.is_visible(): continue
-             href = await lk.get_attribute("href") or ""
-             # If href is exactly the base category URL, it's a reset. Skip it.
-             # e.g. /chl/ or /lar/ or http://.../chl/
-             if href.rstrip('/').endswith(("/chl", "/lar")):
-                 print(f"Skipping link {href} as it looks like a global navigation reset.")
-                 continue
-             
-             # If it's not a reset, it might be the tab.
-             print(f"Clicking fallback link: {href}")
-             await lk.click()
-             break
-
-    # 等待列表刷新
-    await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
+    try:
+        await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
+    except Exception as e:
+        print(f"Warning: filter list not found after switching category. This might be OK if there are no records. Error: {e}")
 
 
 async def apply_this_month_effective_filter(page: Page) -> None:
@@ -442,15 +411,7 @@ async def run(
                 print(f"Processing Category: {cat_label} ({cat_key})")
                 
                 # Step 1: Go to Home (Reset state)
-                # Wait for any previous nav/ajax to settle
-                if cat_key == "local":
-                    # For second iteration, let's explicitly click the logo or go to BASE_URL
-                    await goto_home(page)
-                else: 
-                    # First run.
-                    # Page is already at Home from `goto_home(page)` above the loop if run() starts there.
-                    # But run() calls goto_home inside try.
-                    pass
+                await goto_home(page)
                 
                 # Step 2: Click Category Tab *BEFORE* Searching
                 # This ensures we are in the correct 'Library' scope if the tabs work that way.
