@@ -34,69 +34,81 @@ async def goto_home(page: Page) -> None:
         await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=60000)
 
 
-async def click_category_nav(page: Page, label: str) -> None:
+async def click_category_nav(page: Page, label: str) -> bool:
     """
     在首页点击分类导航按钮（如“中央法规”、“地方法规”）。
     由于页面加载慢，点击后等待较长时间。
     """
     print(f"Navigating to category: {label}")
     
-    # 尝试找到准确文本的链接
-    # 首页通常有明显的 "中央法规" 链接
-    # 使用 a:text-is 或者 a:has-text，优先精确匹配
-    link = page.locator(f"a:has-text('{label}')").first
-    
-    # 为了防止点到不相关的链接，稍微过滤一下可见性
-    if await link.count() == 0:
-        print(f"Error: Link with text '{label}' not found.")
-        return
+    try:
+        # 尝试找到准确文本的链接
+        # 首页通常有明显的 "中央法规" 链接
+        # 使用 a:text-is 或者 a:has-text，优先精确匹配
+        link = page.locator(f"a:has-text('{label}')").first
+        
+        # 为了防止点到不相关的链接，稍微过滤一下可见性
+        if await link.count() == 0:
+            print(f"Error: Link with text '{label}' not found.")
+            return False
 
-    await link.wait_for(state="visible", timeout=30000)
-    await link.click()
-    
-    # 按照用户要求，每步操作后停顿10秒以上
-    print("Waiting 12s after clicking category...")
-    await page.wait_for_timeout(12000)
-    
-    # 注意：点击"中央法规"后，可能会跳转到 /chl 页面。
-    # 此时页面元素可能完全刷新，需要重新定位后续的搜索框。
-    # search_by_title 函数里会重新 locate 搜索框，所以这里不需要额外操作。
+        await link.wait_for(state="visible", timeout=30000)
+        await link.click()
+        
+        # 按照用户要求，每步操作后停顿10秒以上
+        print("Waiting 12s after clicking category...")
+        await page.wait_for_timeout(12000)
+
+        # 验证是否真的切换了? 
+        # 简单起见，只要点击成功且没有报错，就认为成功。
+        return True
+    except Exception as e:
+        print(f"Error navigating to category '{label}': {e}")
+        return False
 
 
-async def search_by_title(page: Page, keyword: str) -> None:
+async def search_by_title(page: Page, keyword: str) -> bool:
     print(f"Searching for: {keyword}")
-    # 首页/结果页顶部都有同一个检索框
-    box = page.locator("input#txtSearch")
-    await box.wait_for(state="visible", timeout=30000)
-    await box.fill(keyword)
-    
-    # 输入后稍作停顿
-    await page.wait_for_timeout(2000)
-
-    # 点击“检索/新检索”按钮
-    btn = page.locator("a#btnSearch")
-    await btn.wait_for(state="visible", timeout=30000)
-    
-    await btn.click()
-    
-    # 强制等待，因为网页加载很慢
-    print("Waiting 15s for search results to load...")
-    await page.wait_for_timeout(15000)
-
-    # 等结果区域出现
     try:
-        await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
-    except:
-        print("Warning: Result list not detected (timeout).")
+        # 首页/结果页顶部都有同一个检索框
+        box = page.locator("input#txtSearch")
+        await box.wait_for(state="visible", timeout=30000)
+        await box.fill(keyword)
+        
+        # 输入后稍作停顿
+        await page.wait_for_timeout(2000)
 
-    # 简单验证结果
-    first_title_loc = page.locator(".t h4 a").first
-    try:
-        if await first_title_loc.count() > 0:
-             title = (await first_title_loc.inner_text(timeout=5000)).strip()
-             print(f"DEBUG: First result title: '{title}'")
-    except:
-        pass
+        # 点击“检索/新检索”按钮
+        btn = page.locator("a#btnSearch")
+        await btn.wait_for(state="visible", timeout=30000)
+        
+        await btn.click()
+        
+        # 强制等待，因为网页加载很慢
+        print("Waiting 15s for search results to load...")
+        await page.wait_for_timeout(15000)
+
+        # 等结果区域出现
+        try:
+            await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
+        except Exception:
+            print("Warning: Result list not detected (timeout).")
+            return False
+
+        # 简单验证结果
+        first_title_loc = page.locator(".t h4 a").first
+        try:
+            if await first_title_loc.count() > 0:
+                 title = (await first_title_loc.inner_text(timeout=5000)).strip()
+                 print(f"DEBUG: First result title: '{title}'")
+            return True
+        except Exception:
+            # 只要能看到 list 就认为成功，哪怕 title 读不到
+            return True
+            
+    except Exception as e:
+        print(f"Error during search: {e}")
+        return False
 
 
 
@@ -378,11 +390,21 @@ async def run(
                 await page.wait_for_timeout(5000)
                 
                 # Step 2: Click Category Tab *BEFORE* Searching
-                # As per user request: click "中央法规" or "地方法规" first
-                await click_category_nav(page, cat_label)
+                # "中央法规"无需点击，首页默认即是；"地方法规"需要点击切换
+                if cat_key == "local":
+                    nav_ok = await click_category_nav(page, cat_label)
+                    if not nav_ok:
+                        print(f"Skipping category '{cat_label}': Navigation failed.")
+                        continue
+                else:
+                    print(f"Category '{cat_label}' is default. Skipping navigation.")
 
                 # Step 3: Search text
-                await search_by_title(page, keyword)
+                # Only if navigation succeeded
+                search_ok = await search_by_title(page, keyword)
+                if not search_ok:
+                    print(f"Skipping category '{cat_label}': Search failed.")
+                    continue
                 
                 # Step 4: Collect results
                 # We skip 'apply_this_month_effective_filter' because it's unreliable/resets search.
