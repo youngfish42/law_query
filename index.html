@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>法规查询结果</title>
+    <title>法规定期查询结果</title>
     <style>
         body { font-family: sans-serif; margin: 20px; }
         h1 { text-align: center; }
@@ -54,7 +54,7 @@
                 const metaResponse = await fetch('meta.json');
                 if (metaResponse.ok) {
                     const meta = await metaResponse.json();
-                    document.getElementById('timestamp').textContent = `更新时间：${meta.updated_at} (北京时间)`;
+                    document.getElementById('timestamp').textContent = `更新时间：${meta.updated_at}`;
                 } else {
                     document.getElementById('timestamp').textContent = '更新时间未知';
                 }
