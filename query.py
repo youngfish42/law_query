@@ -12,6 +12,12 @@ from playwright.async_api import async_playwright, Page
 
 
 BASE_URL = "https://www.pkulaw.com"
+# Pause (ms) between detail-page requests to avoid overloading the server
+DETAIL_PAGE_DELAY_MS = 1000
+# Maximum number of children an element may have and still be considered
+# a "leaf-ish" label node during DOM traversal for metadata extraction.
+# Elements with more children are likely containers, not individual labels.
+_LABEL_MAX_CHILDREN = 3
 
 
 @dataclass
@@ -20,6 +26,9 @@ class Record:
     title: str
     url: str
     publish_date: str  # YYYY.MM.DD
+    issuing_authority: str = ""  # 制定机关
+    legal_hierarchy: str = ""   # 效力位阶
+    law_category: str = ""      # 法规类别
 
 
 PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}\.\d{2})\s*公布")
@@ -110,6 +119,139 @@ async def search_by_title(page: Page, keyword: str) -> bool:
         print(f"搜索过程中出错: {e}")
         return False
 
+
+
+async def fetch_detail_info(page: Page, url: str) -> dict:
+    """访问法规详情页，获取制定机关、效力位阶和法规类别。"""
+    result = {"issuing_authority": "", "legal_hierarchy": "", "law_category": ""}
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+        # Wait until the expected metadata labels appear in the page body,
+        # rather than sleeping for a fixed duration.
+        try:
+            await page.wait_for_function(
+                """() => {
+                    const text = document.body ? document.body.innerText : '';
+                    return text.includes('制定机关') ||
+                           text.includes('效力位阶') ||
+                           text.includes('法规类别');
+                }""",
+                timeout=5000,
+            )
+        except Exception:
+            # If the expected labels do not appear in time, continue and let the
+            # extraction logic attempt to parse whatever content is available.
+            pass
+
+        # Use JavaScript to walk the DOM and find label→value pairs.
+        # pkulaw.com renders these fields in a table/dl where each label cell
+        # is immediately followed (as next sibling or parent's next sibling) by
+        # the value cell.
+        detail = await page.evaluate(f"""() => {{
+            const targets = {{
+                '制定机关': 'issuing_authority',
+                '效力位阶': 'legal_hierarchy',
+                '法规类别': 'law_category'
+            }};
+            const result = {{
+                issuing_authority: '',
+                legal_hierarchy: '',
+                law_category: ''
+            }};
+
+            function getText(el) {{
+                return el ? el.textContent.trim() : '';
+            }}
+
+            const all = document.querySelectorAll('*');
+            for (const el of all) {{
+                // Only consider "leaf-ish" elements (≤ {_LABEL_MAX_CHILDREN} children) to avoid
+                // matching large container elements that include the label text.
+                if (el.children.length > {_LABEL_MAX_CHILDREN}) continue;
+
+                const text = getText(el);
+                for (const [label, key] of Object.entries(targets)) {{
+                    if (result[key]) continue;
+
+                    if (text === label || text === label + '：' || text === label + ':') {{
+                        // Try next element sibling first
+                        if (el.nextElementSibling) {{
+                            const val = getText(el.nextElementSibling);
+                            if (val) {{ result[key] = val; break; }}
+                        }}
+                        // Try parent element's next sibling
+                        const parent = el.parentElement;
+                        if (parent && parent.nextElementSibling) {{
+                            const val = getText(parent.nextElementSibling);
+                            if (val) {{ result[key] = val; break; }}
+                        }}
+                    }}
+                }}
+            }}
+            return result;
+        }}""")
+
+        result.update({k: v for k, v in detail.items() if v})
+    except Exception as e:
+        print(f"获取详情页信息失败 ({url}): {e}")
+    return result
+
+
+def load_existing_records(path: Path) -> dict:
+    """从 CSV 文件读取已有记录，返回 url -> Record 字典。"""
+    existing: dict = {}
+    if not path.exists():
+        return existing
+    try:
+        with path.open("r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                url = row.get("url", "")
+                if url:
+                    existing[url] = Record(
+                        category=row.get("category", ""),
+                        title=row.get("title", ""),
+                        url=url,
+                        publish_date=row.get("publish_date", ""),
+                        issuing_authority=row.get("issuing_authority", ""),
+                        legal_hierarchy=row.get("legal_hierarchy", ""),
+                        law_category=row.get("law_category", ""),
+                    )
+    except Exception as e:
+        print(f"Warning: 读取现有CSV失败: {e}")
+    return existing
+
+
+async def enrich_records_with_details(
+    page: Page,
+    records: List[Record],
+    existing: dict,
+) -> None:
+    """为每条记录抓取详情页信息（若已有则跳过）。"""
+    for r in records:
+        # Reuse any detail info that was already fetched in a previous run.
+        # Only skip the fetch when all target detail fields are already populated.
+        old = existing.get(r.url)
+        if old:
+            if old.issuing_authority:
+                r.issuing_authority = old.issuing_authority
+            if old.legal_hierarchy:
+                r.legal_hierarchy = old.legal_hierarchy
+            if old.law_category:
+                r.law_category = old.law_category
+
+        if r.issuing_authority and r.legal_hierarchy and r.law_category:
+            print(f"复用已有详情: {r.title[:40]}")
+            continue
+
+        print(f"获取详情: {r.title[:40]}...")
+        detail = await fetch_detail_info(page, r.url)
+        r.issuing_authority = r.issuing_authority or detail.get("issuing_authority", "")
+        r.legal_hierarchy = r.legal_hierarchy or detail.get("legal_hierarchy", "")
+        r.law_category = r.law_category or detail.get("law_category", "")
+        # Brief pause to be polite to the server
+        await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
 
 
 async def apply_this_month_effective_filter(page: Page) -> None:
@@ -313,14 +455,25 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                         title=row.get("title", ""),
                         url=row.get("url", ""),
                         publish_date=row.get("publish_date", ""),
+                        issuing_authority=row.get("issuing_authority", ""),
+                        legal_hierarchy=row.get("legal_hierarchy", ""),
+                        law_category=row.get("law_category", ""),
                     )
                     if r.url:
                         merged_map[r.url] = r
         except Exception as e:
             print(f"Warning: 读取现有CSV合并失败: {e}")
 
-    # 合并新查询到的数据（优先使用新数据）
+    # 合并新查询到的数据（优先使用新数据，但保留已有的详情字段）
     for r in rows:
+        if r.url in merged_map:
+            old = merged_map[r.url]
+            if not r.issuing_authority and old.issuing_authority:
+                r.issuing_authority = old.issuing_authority
+            if not r.legal_hierarchy and old.legal_hierarchy:
+                r.legal_hierarchy = old.legal_hierarchy
+            if not r.law_category and old.law_category:
+                r.law_category = old.law_category
         merged_map[r.url] = r
 
     # 按 publish_date 降序排序（由新到旧）
@@ -333,7 +486,11 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
     # 写回文件
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8-sig") as f:
-        w = csv.DictWriter(f, fieldnames=["category", "title", "url", "publish_date"])
+        w = csv.DictWriter(
+            f,
+            fieldnames=["category", "title", "url", "publish_date",
+                        "issuing_authority", "legal_hierarchy", "law_category"],
+        )
         w.writeheader()
         for r in sorted_records:
             w.writerow(asdict(r))
@@ -373,6 +530,9 @@ async def run(
 
         try:
             all_records: List[Record] = []
+            
+            # 加载已有数据，用于跳过已抓取详情的记录
+            existing_data = load_existing_records(out_csv)
             
             # 使用当月作为Python端过滤
             current_month_prefix = datetime.now().strftime("%Y.%m")
@@ -429,6 +589,10 @@ async def run(
                 
                 all_records.extend(found_recs)
                 print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
+
+            # 第五步: 访问每条记录的详情页，获取制定机关、效力位阶、法规类别
+            print(f"开始获取 {len(all_records)} 条记录的详情信息...")
+            await enrich_records_with_details(page, all_records, existing_data)
                 
             # 输出
             write_csv(out_csv, all_records)
