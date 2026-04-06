@@ -9,6 +9,10 @@ on:
         description: '检索关键词 (默认为 "智能")'
         required: false
         default: '智能'
+      enrich_existing:
+        description: '仅补全已有条目的制定机关/效力位阶/法规类别（不执行新搜索，true/false）'
+        required: false
+        default: 'false'
 
 permissions:
   contents: write
@@ -37,10 +41,17 @@ jobs:
           if [ -z "$KEYWORD" ]; then
             KEYWORD="智能"
           fi
+          ENRICH="${{ inputs.enrich_existing }}"
           echo "Current keyword: $KEYWORD"
+          echo "Enrich existing: $ENRICH"
 
-          # 运行查询脚本，默认参数即可（输出到 法规.csv）
-          python query.py --keyword "$KEYWORD" --out "法规.csv"
+          if [ "$ENRICH" = "true" ]; then
+            # 仅补全已有条目的详情信息，不执行新搜索
+            python query.py --enrich-existing --out "法规.csv"
+          else
+            # 执行常规搜索并更新
+            python query.py --keyword "$KEYWORD" --out "法规.csv"
+          fi
           
       - name: Generate Update Time
         run: |
