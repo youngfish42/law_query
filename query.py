@@ -531,6 +531,7 @@ async def run_enrich_existing(
             "slow_mo": slow_mo,
         }
 
+        browser = None
         if user_data_dir:
             context = await p.chromium.launch_persistent_context(
                 str(user_data_dir), **launch_kwargs
@@ -551,6 +552,8 @@ async def run_enrich_existing(
                 await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
         finally:
             await context.close()
+            if browser:
+                await browser.close()
 
     all_records = list(existing.values())
     write_csv(out_csv, all_records)
