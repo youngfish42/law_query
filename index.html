@@ -233,12 +233,12 @@
             <table id="lawTable">
                 <thead>
                     <tr>
-                        <th class="col-category" onclick="handleSort('category')">分类</th>
-                        <th onclick="handleSort('title')">标题</th>
-                        <th class="col-date" onclick="handleSort('publish_date')">公布日期</th>
-                        <th class="col-authority" onclick="handleSort('issuing_authority')">制定机关</th>
-                        <th class="col-hierarchy" onclick="handleSort('legal_hierarchy')">效力位阶</th>
-                        <th class="col-lawcat" onclick="handleSort('law_category')">法规类别</th>
+                        <th class="col-category" data-column="category" onclick="handleSort('category')">分类</th>
+                        <th data-column="title" onclick="handleSort('title')">标题</th>
+                        <th class="col-date" data-column="publish_date" onclick="handleSort('publish_date')">公布日期</th>
+                        <th class="col-authority" data-column="issuing_authority" onclick="handleSort('issuing_authority')">制定机关</th>
+                        <th class="col-hierarchy" data-column="legal_hierarchy" onclick="handleSort('legal_hierarchy')">效力位阶</th>
+                        <th class="col-lawcat" data-column="law_category" onclick="handleSort('law_category')">法规类别</th>
                     </tr>
                 </thead>
                 <tbody id="tableBody">
@@ -361,7 +361,7 @@
             const ths = document.querySelectorAll('th');
             ths.forEach(th => {
                 th.classList.remove('sort-asc', 'sort-desc');
-                if (th.getAttribute('onclick') && th.getAttribute('onclick').includes(currentSort.column)) {
+                if (th.dataset.column === currentSort.column) {
                     th.classList.add(`sort-${currentSort.direction}`);
                 }
             });

@@ -126,7 +126,23 @@ async def fetch_detail_info(page: Page, url: str) -> dict:
     result = {"issuing_authority": "", "legal_hierarchy": "", "law_category": ""}
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        await page.wait_for_timeout(2000)
+
+        # Wait until the expected metadata labels appear in the page body,
+        # rather than sleeping for a fixed duration.
+        try:
+            await page.wait_for_function(
+                """() => {
+                    const text = document.body ? document.body.innerText : '';
+                    return text.includes('制定机关') ||
+                           text.includes('效力位阶') ||
+                           text.includes('法规类别');
+                }""",
+                timeout=5000,
+            )
+        except Exception:
+            # If the expected labels do not appear in time, continue and let the
+            # extraction logic attempt to parse whatever content is available.
+            pass
 
         # Use JavaScript to walk the DOM and find label→value pairs.
         # pkulaw.com renders these fields in a table/dl where each label cell
@@ -214,20 +230,26 @@ async def enrich_records_with_details(
 ) -> None:
     """为每条记录抓取详情页信息（若已有则跳过）。"""
     for r in records:
-        # Reuse detail info that was already fetched in a previous run
+        # Reuse any detail info that was already fetched in a previous run.
+        # Only skip the fetch when all target detail fields are already populated.
         old = existing.get(r.url)
-        if old and (old.issuing_authority or old.legal_hierarchy or old.law_category):
-            r.issuing_authority = old.issuing_authority
-            r.legal_hierarchy = old.legal_hierarchy
-            r.law_category = old.law_category
+        if old:
+            if old.issuing_authority:
+                r.issuing_authority = old.issuing_authority
+            if old.legal_hierarchy:
+                r.legal_hierarchy = old.legal_hierarchy
+            if old.law_category:
+                r.law_category = old.law_category
+
+        if r.issuing_authority and r.legal_hierarchy and r.law_category:
             print(f"复用已有详情: {r.title[:40]}")
             continue
 
         print(f"获取详情: {r.title[:40]}...")
         detail = await fetch_detail_info(page, r.url)
-        r.issuing_authority = detail.get("issuing_authority", "")
-        r.legal_hierarchy = detail.get("legal_hierarchy", "")
-        r.law_category = detail.get("law_category", "")
+        r.issuing_authority = r.issuing_authority or detail.get("issuing_authority", "")
+        r.legal_hierarchy = r.legal_hierarchy or detail.get("legal_hierarchy", "")
+        r.law_category = r.law_category or detail.get("law_category", "")
         # Brief pause to be polite to the server
         await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
 
