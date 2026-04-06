@@ -50,28 +50,70 @@ async def click_category_nav(page: Page, label: str) -> bool:
     print(f"正在切换到分类: {label}")
     
     try:
-        # 尝试找到准确文本的链接
-        # 首页通常有明显的 "中央法规" 链接
-        # 使用 a:text-is 或者 a:has-text，优先精确匹配
-        link = page.locator(f"a:has-text('{label}')").first
+        # 尝试多种选择器策略从最具体到最通用
+        strategies = [
+            (f"a:text-is('{label}')", "精确文本匹配"),
+            (f"a:has-text('{label}')", "包含文本匹配"),
+            (f"a:has-text('{label.strip()}')", "去除空格后的文本匹配"),
+        ]
         
-        # 为了防止点到不相关的链接，稍微过滤一下可见性
-        if await link.count() == 0:
-            print(f"Error: 未找到文本为 '{label}' 的链接。")
+        links = None
+        strategy_used = ""
+        
+        for selector, desc in strategies:
+            try:
+                candidate = page.locator(selector)
+                count = await candidate.count()
+                print(f"DEBUG: 尝试 '{desc}' 选择器: {selector} -> 找到 {count} 个链接")
+                
+                if count > 0:
+                    links = candidate
+                    strategy_used = desc
+                    print(f"DEBUG: 使用策略: {desc}")
+                    break
+            except Exception:
+                continue
+        
+        if links is None:
+            print(f"ERROR: 未找到文本为 '{label}' 的链接。")
             return False
-
-        await link.wait_for(state="visible", timeout=30000)
-        await link.click()
+        
+        # 过滤可见的链接
+        visible_links = []
+        count = await links.count()
+        for i in range(count):
+            link = links.nth(i)
+            try:
+                is_visible = await link.is_visible()
+                href = await link.get_attribute("href")
+                text = await link.inner_text()
+                print(f"DEBUG: 链接 {i}: 可见={is_visible}, 文本='{text}', href='{href}'")
+                if is_visible:
+                    visible_links.append(link)
+            except Exception as e:
+                print(f"DEBUG: 检查链接 {i} 时出错: {e}")
+        
+        if not visible_links:
+            print(f"ERROR: 找到 {count} 个链接，但都不可见。")
+            return False
+        
+        # 选择第一个可见链接
+        target_link = visible_links[0]
+        target_text = await target_link.inner_text()
+        print(f"DEBUG: 选择目标链接: '{target_text}'")
+        
+        await target_link.click()
+        print(f"已点击分类链接: {label}")
         
         # 按照用户要求，每步操作后停顿10秒以上
         print("点击分类后等待 12 秒...")
         await page.wait_for_timeout(12000)
 
-        # 验证是否真的切换了? 
-        # 简单起见，只要点击成功且没有报错，就认为成功。
         return True
     except Exception as e:
-        print(f"切换到分类 '{label}' 时出错: {e}")
+        print(f"ERROR: 切换到分类 '{label}' 时出错: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -80,45 +122,58 @@ async def search_by_title(page: Page, keyword: str) -> bool:
     try:
         # 首页/结果页顶部都有同一个检索框
         box = page.locator("input#txtSearch")
+        print("DEBUG: 等待搜索框出现...")
         await box.wait_for(state="visible", timeout=30000)
         await box.fill(keyword)
+        print(f"DEBUG: 已输入关键词: {keyword}")
         
         # 输入后稍作停顿
         await page.wait_for_timeout(2000)
 
-        # 点击“检索/新检索”按钮
+        # 点击"检索/新检索"按钮
         btn = page.locator("a#btnSearch")
+        print("DEBUG: 等待搜索按钮出现...")
         await btn.wait_for(state="visible", timeout=30000)
         
         await btn.click()
+        print("DEBUG: 已点击搜索按钮")
         
         # 强制等待，因为网页加载很慢
         print("等待 15 秒加载搜索结果...")
         await page.wait_for_timeout(15000)
 
         # 等结果区域出现
+        print("DEBUG: 等待结果列表元素出现...")
         try:
             await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
+            print("DEBUG: 结果列表元素已出现")
         except Exception:
-            print("Warning: 未检测到结果列表（超时）。")
-            return False
+            print("WARNING: 未检测到结果列表（超时）。")
+            # 即使超时，也尝试继续
+            record_count = await page.locator('input[name="recordList"]').count()
+            print(f"DEBUG: 实际找到的 recordList 元素数: {record_count}")
+            if record_count == 0:
+                return False
 
         # 简单验证结果
         first_title_loc = page.locator(".t h4 a").first
         try:
-            if await first_title_loc.count() > 0:
+            count = await first_title_loc.count()
+            print(f"DEBUG: 找到 {count} 个结果标题")
+            if count > 0:
                  title = (await first_title_loc.inner_text(timeout=5000)).strip()
                  print(f"DEBUG: 第一条结果标题: '{title}'")
             return True
-        except Exception:
+        except Exception as e:
             # 只要能看到 list 就认为成功，哪怕 title 读不到
+            print(f"DEBUG: 读取标题时出错（但继续）: {e}")
             return True
             
     except Exception as e:
-        print(f"搜索过程中出错: {e}")
+        print(f"ERROR: 搜索过程中出错: {e}")
+        import traceback
+        traceback.print_exc()
         return False
-
-
 
 async def fetch_detail_info(page: Page, url: str) -> dict:
     """访问法规详情页，获取制定机关和效力位阶。"""
@@ -302,6 +357,7 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
     # 每条记录通常在 div.col 下，含 div.t(h4>a) + div.info(含日期)
     cols = page.locator("div.col")
     n = await cols.count()
+    print(f"DEBUG: 在分类 '{category}' 中找到 {n} 个 div.col 元素")
     out: List[Record] = []
 
     for i in range(n):
@@ -315,18 +371,18 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
             title = (await a.inner_text(timeout=5000)).strip()
             # 如果提供了用户关键字，通常假设它是校验有效性的必要条件
             # 除非搜索失败，但如果搜索成功，关键字应该在标题中。
-            # 但有时它只在内容中。然而，如果结果完全不相关（如“2026 债券”），则搜索肯定失败了。
-            # 但这里不能太严格。“智能”可能在正文中。
+            # 但有时它只在内容中。然而，如果结果完全不相关（如"2026 债券"），则搜索肯定失败了。
+            # 但这里不能太严格。"智能"可能在正文中。
             href = await a.get_attribute("href", timeout=5000)
         except Exception as e:
-            print(f"跳过无效记录 (缺少标题/链接): {e}")
+            print(f"DEBUG: 跳过无效记录 (缺少标题/链接): {e}")
             continue
 
         if not href:
             continue
         url = href if href.startswith("http") else (BASE_URL + href)
 
-        text = (await col.inner_text()).replace("\u00a0", " ")
+        text = (await col.inner_text()).replace(" ", " ")
         if await col.locator(".info").count() > 0:
             info_text = await col.locator(".info").inner_text()
             text += " " + info_text
@@ -353,24 +409,26 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
              if date_m:
                  publish_date = date_m.group(1) # 假设找到的第一个日期是公布日期
         
-        # 如果用户想要“本月生效”，我们检查 effective_date（如果找到），否则检查 publish_date。
+        # 如果用户想要"本月生效"，我们检查 effective_date（如果找到），否则检查 publish_date。
         # 当前月份前缀
         current_month = datetime.now().strftime("%Y.%m")
         
         # 严格过滤逻辑：
         # 如果有生效日期，检查它。
         # 如果没有，检查公布日期（通常是同一个月）。
-        # 我们只返回匹配“本月”的记录
+        # 我们只返回匹配"本月"的记录
         
         date_to_check = effective_date if effective_date else publish_date
         if not date_to_check.startswith(current_month):
             # 记录不是本月的。跳过。
-            print(f"跳过记录 {title} - 日期 {date_to_check} 不在 {current_month} 中")
+            print(f"DEBUG: 跳过记录 '{title}' - 日期 {date_to_check} 不在 {current_month} 中")
             continue
 
+        print(f"DEBUG: 添加记录到分类 '{category}': 标题='{title[:40]}', 日期={date_to_check}")
         out.append(Record(category=category, title=title, url=url, publish_date=date_to_check))
 
 
+    print(f"DEBUG: 分类 '{category}' 共提取 {len(out)} 条本月记录")
     return out
 
 
