@@ -502,6 +502,62 @@ def write_json(path: Path, rows: Iterable[Record]) -> None:
         json.dump([asdict(r) for r in rows], f, ensure_ascii=False, indent=2)
 
 
+async def run_enrich_existing(
+    out_csv: Path,
+    headless: bool,
+    slow_mo: int,
+    user_data_dir: Optional[Path],
+) -> List[Record]:
+    """读取 CSV 中已存在但缺少制定机关/效力位阶/法规类别的条目，访问其超链接补全信息。"""
+    existing = load_existing_records(out_csv)
+    if not existing:
+        print("CSV 文件中没有找到任何记录。")
+        return []
+
+    to_enrich = [
+        r for r in existing.values()
+        if not (r.issuing_authority and r.legal_hierarchy and r.law_category)
+    ]
+
+    if not to_enrich:
+        print("所有现有记录已包含完整的制定机关/效力位阶/法规类别信息，无需补全。")
+        return list(existing.values())
+
+    print(f"共 {len(existing)} 条现有记录，其中 {len(to_enrich)} 条需要补全详情信息。")
+
+    async with async_playwright() as p:
+        launch_kwargs: dict = {
+            "headless": headless,
+            "slow_mo": slow_mo,
+        }
+
+        if user_data_dir:
+            context = await p.chromium.launch_persistent_context(
+                str(user_data_dir), **launch_kwargs
+            )
+            page = await context.new_page()
+        else:
+            browser = await p.chromium.launch(**launch_kwargs)
+            context = await browser.new_context()
+            page = await context.new_page()
+
+        try:
+            for r in to_enrich:
+                print(f"补全详情: {r.title[:50]}...")
+                detail = await fetch_detail_info(page, r.url)
+                r.issuing_authority = r.issuing_authority or detail.get("issuing_authority", "")
+                r.legal_hierarchy = r.legal_hierarchy or detail.get("legal_hierarchy", "")
+                r.law_category = r.law_category or detail.get("law_category", "")
+                await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
+        finally:
+            await context.close()
+
+    all_records = list(existing.values())
+    write_csv(out_csv, all_records)
+    print(f"已将补全后的 {len(all_records)} 条记录写回 {out_csv}")
+    return all_records
+
+
 async def run(
     keyword: str,
     out_csv: Path,
@@ -617,6 +673,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--slow-mo", type=int, default=0, help="操作放慢（毫秒），用于调试")
     ap.add_argument("--max-items", type=int, default=0, help="最多查询多少条（0=不限制）")
     ap.add_argument("--user-data-dir", default=None, help="持久化浏览器目录（用于复用登录态）")
+    ap.add_argument(
+        "--enrich-existing",
+        action="store_true",
+        help="仅对 CSV 中已存在但缺少制定机关/效力位阶/法规类别的条目补全信息（不执行新搜索）",
+    )
 
     return ap.parse_args()
 
@@ -630,6 +691,19 @@ def main() -> None:
     out_csv = Path(args.out)
     out_json = Path(args.out_json) if args.out_json else None
     user_data_dir = Path(args.user_data_dir) if args.user_data_dir else None
+
+    if args.enrich_existing:
+        records = asyncio.run(
+            run_enrich_existing(
+                out_csv=out_csv,
+                headless=headless,
+                slow_mo=args.slow_mo,
+                user_data_dir=user_data_dir,
+            )
+        )
+        print(f"完成。总记录数: {len(records)}")
+        print(f"CSV文件: {out_csv.resolve()}")
+        return
 
     records = asyncio.run(
         run(
