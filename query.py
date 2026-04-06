@@ -28,7 +28,6 @@ class Record:
     publish_date: str  # YYYY.MM.DD
     issuing_authority: str = ""  # 制定机关
     legal_hierarchy: str = ""   # 效力位阶
-    law_category: str = ""      # 法规类别
 
 
 PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}\.\d{2})\s*公布")
@@ -122,8 +121,8 @@ async def search_by_title(page: Page, keyword: str) -> bool:
 
 
 async def fetch_detail_info(page: Page, url: str) -> dict:
-    """访问法规详情页，获取制定机关、效力位阶和法规类别。"""
-    result = {"issuing_authority": "", "legal_hierarchy": "", "law_category": ""}
+    """访问法规详情页，获取制定机关和效力位阶。"""
+    result = {"issuing_authority": "", "legal_hierarchy": ""}
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
@@ -134,8 +133,7 @@ async def fetch_detail_info(page: Page, url: str) -> dict:
                 """() => {
                     const text = document.body ? document.body.innerText : '';
                     return text.includes('制定机关') ||
-                           text.includes('效力位阶') ||
-                           text.includes('法规类别');
+                              text.includes('效力位阶');
                 }""",
                 timeout=5000,
             )
@@ -151,13 +149,11 @@ async def fetch_detail_info(page: Page, url: str) -> dict:
         detail = await page.evaluate(f"""() => {{
             const targets = {{
                 '制定机关': 'issuing_authority',
-                '效力位阶': 'legal_hierarchy',
-                '法规类别': 'law_category'
+                '效力位阶': 'legal_hierarchy'
             }};
             const result = {{
                 issuing_authority: '',
-                legal_hierarchy: '',
-                law_category: ''
+                legal_hierarchy: ''
             }};
 
             function getText(el) {{
@@ -216,7 +212,6 @@ def load_existing_records(path: Path) -> dict:
                         publish_date=row.get("publish_date", ""),
                         issuing_authority=row.get("issuing_authority", ""),
                         legal_hierarchy=row.get("legal_hierarchy", ""),
-                        law_category=row.get("law_category", ""),
                     )
     except Exception as e:
         print(f"Warning: 读取现有CSV失败: {e}")
@@ -238,10 +233,8 @@ async def enrich_records_with_details(
                 r.issuing_authority = old.issuing_authority
             if old.legal_hierarchy:
                 r.legal_hierarchy = old.legal_hierarchy
-            if old.law_category:
-                r.law_category = old.law_category
 
-        if r.issuing_authority and r.legal_hierarchy and r.law_category:
+        if r.issuing_authority and r.legal_hierarchy:
             print(f"复用已有详情: {r.title[:40]}")
             continue
 
@@ -249,7 +242,6 @@ async def enrich_records_with_details(
         detail = await fetch_detail_info(page, r.url)
         r.issuing_authority = r.issuing_authority or detail.get("issuing_authority", "")
         r.legal_hierarchy = r.legal_hierarchy or detail.get("legal_hierarchy", "")
-        r.law_category = r.law_category or detail.get("law_category", "")
         # Brief pause to be polite to the server
         await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
 
@@ -457,7 +449,6 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                         publish_date=row.get("publish_date", ""),
                         issuing_authority=row.get("issuing_authority", ""),
                         legal_hierarchy=row.get("legal_hierarchy", ""),
-                        law_category=row.get("law_category", ""),
                     )
                     if r.url:
                         merged_map[r.url] = r
@@ -472,8 +463,6 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                 r.issuing_authority = old.issuing_authority
             if not r.legal_hierarchy and old.legal_hierarchy:
                 r.legal_hierarchy = old.legal_hierarchy
-            if not r.law_category and old.law_category:
-                r.law_category = old.law_category
         merged_map[r.url] = r
 
     # 按 publish_date 降序排序（由新到旧）
@@ -489,7 +478,7 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
         w = csv.DictWriter(
             f,
             fieldnames=["category", "title", "url", "publish_date",
-                        "issuing_authority", "legal_hierarchy", "law_category"],
+                        "issuing_authority", "legal_hierarchy"],
         )
         w.writeheader()
         for r in sorted_records:
@@ -508,7 +497,7 @@ async def run_enrich_existing(
     slow_mo: int,
     user_data_dir: Optional[Path],
 ) -> List[Record]:
-    """读取 CSV 中已存在但缺少制定机关/效力位阶/法规类别的条目，访问其超链接补全信息。"""
+    """读取 CSV 中已存在但缺少制定机关/效力位阶的条目，访问其超链接补全信息。"""
     existing = load_existing_records(out_csv)
     if not existing:
         print("CSV 文件中没有找到任何记录。")
@@ -516,11 +505,11 @@ async def run_enrich_existing(
 
     to_enrich = [
         r for r in existing.values()
-        if not (r.issuing_authority and r.legal_hierarchy and r.law_category)
+        if not (r.issuing_authority and r.legal_hierarchy)
     ]
 
     if not to_enrich:
-        print("所有现有记录已包含完整的制定机关/效力位阶/法规类别信息，无需补全。")
+        print("所有现有记录已包含完整的制定机关/效力位阶信息，无需补全。")
         return list(existing.values())
 
     print(f"共 {len(existing)} 条现有记录，其中 {len(to_enrich)} 条需要补全详情信息。")
@@ -548,7 +537,6 @@ async def run_enrich_existing(
                 detail = await fetch_detail_info(page, r.url)
                 r.issuing_authority = r.issuing_authority or detail.get("issuing_authority", "")
                 r.legal_hierarchy = r.legal_hierarchy or detail.get("legal_hierarchy", "")
-                r.law_category = r.law_category or detail.get("law_category", "")
                 await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
         finally:
             await context.close()
@@ -649,7 +637,7 @@ async def run(
                 all_records.extend(found_recs)
                 print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
 
-            # 第五步: 访问每条记录的详情页，获取制定机关、效力位阶、法规类别
+            # 第五步: 访问每条记录的详情页，获取制定机关、效力位阶
             print(f"开始获取 {len(all_records)} 条记录的详情信息...")
             await enrich_records_with_details(page, all_records, existing_data)
                 
@@ -679,7 +667,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--enrich-existing",
         action="store_true",
-        help="仅对 CSV 中已存在但缺少制定机关/效力位阶/法规类别的条目补全信息（不执行新搜索）",
+        help="仅对 CSV 中已存在但缺少制定机关/效力位阶的条目补全信息（不执行新搜索）",
     )
 
     return ap.parse_args()

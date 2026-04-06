@@ -10,7 +10,7 @@ on:
         required: false
         default: '智能'
       enrich_existing:
-        description: '仅补全已有条目的制定机关/效力位阶/法规类别（不执行新搜索，true/false）'
+        description: '仅补全已有条目的制定机关/效力位阶（不执行新搜索，true/false）'
         required: false
         default: 'false'
 
