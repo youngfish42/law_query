@@ -645,58 +645,46 @@ async def run(
 
             # 定义分类及其标签以匹配标签页
             categories = [
-                ("central", "中央法规", False),
-                ("local", "地方法规", True),
-                ("legislative_materials", "立法资料", True),
-                ("legal_updates", "法律动态", True),
+                ("central", "中央法规"),
+                ("local", "地方法规"),
+                ("legislative_materials", "立法资料"),
+                ("legal_updates", "法律动态"),
             ]
 
-            for cat_key, cat_label, nav_needed in categories:
+            # ---- 第一步: 进入首页并执行一次搜索 ----
+            # 搜索后进入结果页，默认显示"中央法规"分类。
+            # 之后在结果页上切换分类标签即可，无需回到首页重新搜索。
+            await goto_home(page)
+            await page.wait_for_timeout(5000)
+
+            search_ok = await search_by_title(page, keyword)
+            if not search_ok:
+                print("ERROR: 首次搜索失败，无法继续。")
+                return all_records
+
+            # ---- 第二步: 遍历各分类标签，在结果页上切换并收集 ----
+            for cat_key, cat_label in categories:
                 print(f"正在处理分类: {cat_label} ({cat_key})")
-                
-                # 第一步: 进入首页
-                await goto_home(page)
-                # 首页加载完稍作等待
-                await page.wait_for_timeout(5000)
-                
-                # 第二步: 搜索前点击分类标签
-                # "中央法规"默认无需切换，其余分类需要点击切换。
-                if nav_needed:
+
+                # "中央法规"是搜索后的默认分类，无需切换；其余分类
+                # 在结果页顶部导航栏点击切换（保留检索式，仅切换分类）。
+                if cat_key != "central":
                     nav_ok = await click_category_nav(page, cat_label)
                     if not nav_ok:
                         print(f"跳过分类 '{cat_label}': 导航失败。")
                         continue
+                    # 切换分类后需要等待结果刷新
+                    print(f"等待 15 秒加载 '{cat_label}' 分类的搜索结果...")
+                    await page.wait_for_timeout(15000)
                 else:
-                    print(f"分类 '{cat_label}' 是默认分类。跳过导航。")
+                    print(f"分类 '{cat_label}' 是搜索后的默认分类，无需切换。")
 
-                # 第三步: 搜索文本
-                # 仅当导航成功后
-                search_ok = await search_by_title(page, keyword)
-                if not search_ok:
-                    print(f"跳过分类 '{cat_label}': 搜索失败。")
-                    continue
-                
-                # 第四步: 收集结果
-                # 我们跳过 'apply_this_month_effective_filter' 以为它不可靠/重置搜索。
-                # 如果用户脚本必须按 '生效日期' 过滤，我们应该抓取该日期。
-                # 然而，抓取 '生效日期' 需要从结果列表中读取更多细节。
-                # 标准结果项文本通常跨越 '公布日期' 和 '生效日期'。
-                
-                # 我们多抓取一些项目以增加找到匹配项的几率
-                items_needed = max_items if max_items > 0 else 100 
-                
-                # 过滤全局已见的键?
-                # records from central vs local might overlap if search is global?
-                # 如果搜索是全局的，我们会得到重复项。
-                # 如果标签有效，我们将得到不同的集合。
-                # 使用集合去重。
+                # 收集结果
+                items_needed = max_items if max_items > 0 else 100
                 all_seen_urls = set(r.url for r in all_records)
-                
+
                 found_recs = await click_load_more_until_done(page, all_seen_urls, cat_key, max_items=items_needed)
-                
-                # 如果关键字没有找到任何内容，也许验证一下？
-                # 但让我们假设搜索返回正常。
-                
+
                 all_records.extend(found_recs)
                 print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
 
