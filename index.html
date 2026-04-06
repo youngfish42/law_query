@@ -143,8 +143,11 @@
         }
 
         /* Column Specifics */
-        .col-category { width: 100px; }
-        .col-date { width: 120px; white-space: nowrap; }
+        .col-category { width: 80px; }
+        .col-date { width: 110px; white-space: nowrap; }
+        .col-authority { width: 140px; }
+        .col-hierarchy { width: 120px; }
+        .col-lawcat { width: 140px; }
 
         a { 
             text-decoration: none; 
@@ -220,7 +223,7 @@
         
         <div class="controls">
             <div class="search-box-container">
-                <input type="text" id="searchInput" placeholder="搜索标题、分类或日期..." oninput="handleSearch()">
+                <input type="text" id="searchInput" placeholder="搜索标题、分类、日期、机关、位阶或类别..." oninput="handleSearch()">
                 <span class="search-icon">🔍</span>
             </div>
             <div class="stats" id="statsInfo">共加载 0 条数据</div>
@@ -233,6 +236,9 @@
                         <th class="col-category" onclick="handleSort('category')">分类</th>
                         <th onclick="handleSort('title')">标题</th>
                         <th class="col-date" onclick="handleSort('publish_date')">公布日期</th>
+                        <th class="col-authority" onclick="handleSort('issuing_authority')">制定机关</th>
+                        <th class="col-hierarchy" onclick="handleSort('legal_hierarchy')">效力位阶</th>
+                        <th class="col-lawcat" onclick="handleSort('law_category')">法规类别</th>
                     </tr>
                 </thead>
                 <tbody id="tableBody">
@@ -319,7 +325,12 @@
                     const title = (item.title || '').toLowerCase();
                     const category = (item.category || '').toLowerCase();
                     const date = (item.publish_date || '').toLowerCase();
-                    return title.includes(searchTerm) || category.includes(searchTerm) || date.includes(searchTerm);
+                    const authority = (item.issuing_authority || '').toLowerCase();
+                    const hierarchy = (item.legal_hierarchy || '').toLowerCase();
+                    const lawcat = (item.law_category || '').toLowerCase();
+                    return title.includes(searchTerm) || category.includes(searchTerm) ||
+                           date.includes(searchTerm) || authority.includes(searchTerm) ||
+                           hierarchy.includes(searchTerm) || lawcat.includes(searchTerm);
                 });
             }
 
@@ -371,7 +382,7 @@
             const pageData = displayedData.slice(start, end);
 
             if (pageData.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding: 20px;">未找到匹配的数据</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 20px;">未找到匹配的数据</td></tr>';
                 renderPagination(0);
                 return;
             }
@@ -382,6 +393,9 @@
                     <td>${row.category || '-'}</td>
                     <td><a href="${row.url}" target="_blank" title="${row.title}">${row.title || '无标题'}</a></td>
                     <td class="col-date">${row.publish_date || '-'}</td>
+                    <td class="col-authority">${row.issuing_authority || '-'}</td>
+                    <td class="col-hierarchy">${row.legal_hierarchy || '-'}</td>
+                    <td class="col-lawcat">${row.law_category || '-'}</td>
                 `;
                 tbody.appendChild(tr);
             });
