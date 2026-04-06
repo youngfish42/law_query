@@ -22,7 +22,7 @@ _LABEL_MAX_CHILDREN = 3
 
 @dataclass
 class Record:
-    category: str  # "central" | "local"
+    category: str  # "central" | "local" | "legislative_materials" | "legal_updates"
     title: str
     url: str
     publish_date: str  # YYYY.MM.DD
@@ -586,9 +586,14 @@ async def run(
             print(f"目标月份: {current_month_prefix}")
 
             # 定义分类及其标签以匹配标签页
-            categories = [("central", "中央法规"), ("local", "地方法规")]
-            
-            for cat_key, cat_label in categories:
+            categories = [
+                ("central", "中央法规", False),
+                ("local", "地方法规", True),
+                ("legislative_materials", "立法资料", True),
+                ("legal_updates", "法律动态", True),
+            ]
+
+            for cat_key, cat_label, nav_needed in categories:
                 print(f"正在处理分类: {cat_label} ({cat_key})")
                 
                 # 第一步: 进入首页
@@ -597,8 +602,8 @@ async def run(
                 await page.wait_for_timeout(5000)
                 
                 # 第二步: 搜索前点击分类标签
-                # "中央法规"无需点击，首页默认即是；"地方法规"需要点击切换
-                if cat_key == "local":
+                # "中央法规"默认无需切换，其余分类需要点击切换。
+                if nav_needed:
                     nav_ok = await click_category_nav(page, cat_label)
                     if not nav_ok:
                         print(f"跳过分类 '{cat_label}': 导航失败。")

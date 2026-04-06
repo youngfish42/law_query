@@ -7,6 +7,8 @@
 
 1. **法律法规 → 中央法规**：筛选 **“本月生效”**
 2. **法律法规 → 地方法规**：筛选 **“本月生效”**
+3. **法律法规 → 立法资料**：筛选 **“本月生效”**
+4. **法律法规 → 法律动态**：筛选 **“本月生效”**
 
 并导出相应结果的：**title / url / publish_date**。
 
@@ -17,6 +19,7 @@
 
 ```bash
 pip install -r requirements.txt
+```
 
 ## GitHub Pages 部署
 
@@ -36,8 +39,6 @@ pip install -r requirements.txt
 3.  **访问网页**：
     -设置完成后，网页地址通常为 `https://<你的用户名>.github.io/law_query/`。
 
-```
-
 ## 快速运行
 
 ```bash
@@ -54,7 +55,7 @@ python query.py --keyword 智能 --out results.csv --out-json results.json
 
 - `--keyword`：检索词（默认：智能）
 - `--headless / --headed`：无头/有头模式（默认无头）
-- `--max-items`：最多查询多少条（0 表示不限制，默认 0；对中央/地方都生效）
+- `--max-items`：最多查询多少条（0 表示不限制，默认 0；对四个分类都生效）
 - `--slow-mo`：调试用，放慢浏览器操作（毫秒）
 - `--user-data-dir`：使用持久化浏览器目录保存 cookie（可用于需要登录的情况）
 
@@ -76,7 +77,7 @@ python query.py --headed --slow-mo 200 --max-items 200
 
 CSV 列：
 
-- `category`：central 或 local
+- `category`：central / local / legislative_materials / legal_updates
 - `title`
 - `url`
 - `publish_date`：YYYY.MM.DD

@@ -261,6 +261,12 @@
         let currentPage = 1;
         const itemsPerPage = 50;
         let currentSort = { column: 'publish_date', direction: 'desc' }; // Default sort
+        const categoryMap = {
+            central: '中央法规',
+            local: '地方法规',
+            legislative_materials: '立法资料',
+            legal_updates: '法律动态'
+        };
 
         document.addEventListener('DOMContentLoaded', init);
 
@@ -385,9 +391,11 @@
             }
 
             pageData.forEach(row => {
+                const categoryKey = (row.category || '').toLowerCase();
+                const categoryText = categoryMap[categoryKey] || row.category || '-';
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td>${row.category || '-'}</td>
+                    <td>${categoryText}</td>
                     <td><a href="${row.url}" target="_blank" title="${row.title}">${row.title || '无标题'}</a></td>
                     <td class="col-date">${row.publish_date || '-'}</td>
                     <td class="col-authority">${row.issuing_authority || '-'}</td>
