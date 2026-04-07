@@ -68,7 +68,7 @@ def load_last_updated() -> datetime:
 
 def build_feed(records: list[dict], last_updated: datetime) -> ET.Element:
     rss = ET.Element("rss", version="2.0")
-    # Add Dublin Core and Atom namespaces
+    # Add Atom namespace
     rss.set("xmlns:atom", "http://www.w3.org/2005/Atom")
 
     channel = ET.SubElement(rss, "channel")
