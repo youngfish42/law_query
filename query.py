@@ -22,7 +22,7 @@ _LABEL_MAX_CHILDREN = 3
 
 @dataclass
 class Record:
-    category: str  # "central" | "local" | "legislative_materials" | "legislative_interpretations" | "legal_updates"
+    category: str  # "中央法规" | "地方法规" | "立法资料" | "法规解读" | "法律动态"
     title: str
     url: str
     publish_date: str  # YYYY.MM.DD
@@ -31,6 +31,23 @@ class Record:
 
 
 PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}(?:\.\d{2})?)\s*公布")
+
+CATEGORY_NAME_MAP = {
+    "central": "中央法规",
+    "local": "地方法规",
+    "legislative_materials": "立法资料",
+    "legislative_interpretations": "法规解读",
+    "legal_updates": "法律动态",
+    "中央法规": "中央法规",
+    "地方法规": "地方法规",
+    "立法资料": "立法资料",
+    "法规解读": "法规解读",
+    "法律动态": "法律动态",
+}
+
+
+def normalize_category(value: str) -> str:
+    return CATEGORY_NAME_MAP.get((value or "").strip(), (value or "").strip())
 
 
 async def goto_home(page: Page) -> None:
@@ -309,8 +326,9 @@ def load_existing_records(path: Path) -> dict:
             for row in reader:
                 url = row.get("url", "")
                 if url:
+                    category = normalize_category(row.get("category", ""))
                     existing[url] = Record(
-                        category=row.get("category", ""),
+                        category=category,
                         title=row.get("title", ""),
                         url=url,
                         publish_date=row.get("publish_date", ""),
@@ -530,7 +548,7 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                 for row in reader:
                     # 构造 Record 对象，处理可能缺失的字段
                     r = Record(
-                        category=row.get("category", ""),
+                        category=normalize_category(row.get("category", "")),
                         title=row.get("title", ""),
                         url=row.get("url", ""),
                         publish_date=row.get("publish_date", ""),
@@ -714,7 +732,7 @@ async def run(
                 items_needed = max_items if max_items > 0 else 100
                 all_seen_urls = set(r.url for r in all_records)
 
-                found_recs = await click_load_more_until_done(page, all_seen_urls, cat_key, max_items=items_needed)
+                found_recs = await click_load_more_until_done(page, all_seen_urls, cat_label, max_items=items_needed)
 
                 all_records.extend(found_recs)
                 print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
@@ -730,7 +748,7 @@ async def run(
 
                     all_seen_urls = set(r.url for r in all_records)
                     sub_recs = await click_load_more_until_done(
-                        page, all_seen_urls, sub_key, max_items=items_needed
+                        page, all_seen_urls, sub_label, max_items=items_needed
                     )
                     all_records.extend(sub_recs)
                     print(f"为 {sub_label} 找到 {len(sub_recs)} 条记录")

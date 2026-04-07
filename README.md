@@ -77,7 +77,7 @@ python query.py --headed --slow-mo 200 --max-items 200
 
 CSV 列：
 
-- `category`：central / local / legislative_materials / legal_updates
+- `category`：中央法规 / 地方法规 / 立法资料 / 法规解读 / 法律动态
 - `title`
 - `url`
 - `publish_date`：YYYY.MM.DD
