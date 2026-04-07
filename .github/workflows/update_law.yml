@@ -67,11 +67,15 @@ jobs:
           # 生成 meta.json 包含北京时间
           python -c "import json; from datetime import datetime, timedelta, timezone; tz = timezone(timedelta(hours=8)); now = datetime.now(tz).strftime('%Y-%m-%d %H:%M'); print(json.dumps({'updated_at': now}, ensure_ascii=False))" > meta.json
 
+      - name: Generate RSS Feed
+        run: |
+          python generate_rss.py
+
       - name: Commit and push changes
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add 法规.csv meta.json
+          git add 法规.csv meta.json feed.xml
           
           # Check for staged changes
           if git diff --staged --quiet; then
@@ -88,3 +92,4 @@ jobs:
           path: |
             法规.csv
             meta.json
+            feed.xml

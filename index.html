@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI法规库查询</title>
+    <link rel="alternate" type="application/rss+xml" title="AI法规库 RSS订阅" href="feed.xml">
     <style>
         :root {
             --primary-color: #007bff;
@@ -205,6 +206,30 @@
             color: #666;
         }
 
+        /* RSS Button */
+        .rss-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 8px 14px;
+            background-color: #f26522;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            white-space: nowrap;
+            transition: background-color 0.2s;
+        }
+
+        .rss-btn:hover {
+            background-color: #d4541a;
+            color: white;
+            text-decoration: none;
+        }
+
         @media (max-width: 600px) {
             body { padding: 10px; }
             .container { padding: 10px; }
@@ -226,6 +251,10 @@
                 <span class="search-icon">🔍</span>
             </div>
             <div class="stats" id="statsInfo">共加载 0 条数据</div>
+            <a class="rss-btn" href="feed.xml" title="RSS订阅 - 获取最新法规更新">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" aria-hidden="true"><path d="M6.18 15.64a2.18 2.18 0 0 1 2.18 2.18C8.36 19.01 7.38 20 6.18 20C4.98 20 4 19.01 4 17.82a2.18 2.18 0 0 1 2.18-2.18M4 4.44A15.56 15.56 0 0 1 19.56 20h-2.83A12.73 12.73 0 0 0 4 7.27V4.44m0 5.66a9.9 9.9 0 0 1 9.9 9.9h-2.83A7.07 7.07 0 0 0 4 12.93V10.1z"/></svg>
+                RSS订阅
+            </a>
         </div>
 
         <div class="table-responsive">
