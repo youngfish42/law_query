@@ -22,7 +22,7 @@ _LABEL_MAX_CHILDREN = 3
 
 @dataclass
 class Record:
-    category: str  # "central" | "local" | "legislative_materials" | "legal_updates"
+    category: str  # "central" | "local" | "legislative_materials" | "legislative_interpretations" | "legal_updates"
     title: str
     url: str
     publish_date: str  # YYYY.MM.DD
@@ -30,7 +30,7 @@ class Record:
     legal_hierarchy: str = ""   # 效力位阶
 
 
-PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}\.\d{2})\s*公布")
+PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}(?:\.\d{2})?)\s*公布")
 
 
 async def goto_home(page: Page) -> None:
@@ -112,6 +112,54 @@ async def click_category_nav(page: Page, label: str) -> bool:
         return True
     except Exception as e:
         print(f"ERROR: 切换到分类 '{label}' 时出错: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def click_sub_tab(page: Page, label: str) -> bool:
+    """
+    在搜索结果页中点击子分类标签（如"立法资料"下的"法规解读"）。
+    子分类标签文本包含数量后缀，如"法规解读（45）"，需要使用包含匹配。
+    """
+    print(f"正在切换到子分类: {label}")
+    try:
+        # 子分类标签是 <li><a href="javascript:void(0)">法规解读（N）</a></li>
+        # 使用 has-text 匹配（因为文本包含数量后缀如"法规解读（45）"）
+        # 排除搜索结果中标题链接（它们的 href 不是 javascript:void(0)）
+        candidate = page.locator(
+            f"li > a[href='javascript:void(0)']:has-text('{label}')"
+        )
+        count = await candidate.count()
+        print(f"DEBUG: 子分类 '{label}' 找到 {count} 个候选链接")
+
+        if count == 0:
+            # 也尝试 javascript:void(0); 带分号的版本
+            candidate = page.locator(
+                f"li > a[href='javascript:void(0);']:has-text('{label}')"
+            )
+            count = await candidate.count()
+            print(f"DEBUG: 子分类 '{label}' (带分号) 找到 {count} 个候选链接")
+
+        if count == 0:
+            print(f"WARNING: 未找到子分类 '{label}' 的标签。")
+            return False
+
+        # 选择第一个可见的
+        for i in range(count):
+            link = candidate.nth(i)
+            if await link.is_visible():
+                text = await link.inner_text()
+                print(f"DEBUG: 点击子分类标签: '{text}'")
+                await link.click()
+                print(f"点击子分类后等待 12 秒...")
+                await page.wait_for_timeout(12000)
+                return True
+
+        print(f"WARNING: 子分类 '{label}' 的标签均不可见。")
+        return False
+    except Exception as e:
+        print(f"ERROR: 切换到子分类 '{label}' 时出错: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -385,11 +433,16 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
         if m_eff:
             effective_date = m_eff.group(1)
 
-        # 备选：如果没有标注日期，随便找个日期
+        # 备选：如果没有标注日期，找任意日期（优先 YYYY.MM.DD，其次 YYYY.MM）
         if not publish_date and not effective_date:
              date_m = re.search(r"(\d{4}\.\d{2}\.\d{2})", text)
              if date_m:
                  publish_date = date_m.group(1)
+             else:
+                 # 法规解读等子分类可能只有 "YYYY.MM公布" 格式
+                 date_m2 = re.search(r"(\d{4}\.\d{2})(?!\.\d)", text)
+                 if date_m2:
+                     publish_date = date_m2.group(1)
 
         # 当前月份前缀
         current_month = datetime.now().strftime("%Y.%m")
@@ -621,14 +674,17 @@ async def run(
 
             # 定义分类及其标签以匹配标签页
             # nav_needed: 是否需要在首页点击分类标签（"中央法规"是默认分类，无需点击）
+            # sub_tabs: 额外需要获取的子分类标签列表，格式为 (子分类key, 子分类标签文本)
+            #   - "立法资料"默认显示"草案"子分类，额外获取"法规解读"
             categories = [
-                ("central", "中央法规", False),
-                ("local", "地方法规", True),
-                ("legislative_materials", "立法资料", True),
-                ("legal_updates", "法律动态", True),
+                ("central", "中央法规", False, []),
+                ("local", "地方法规", True, []),
+                ("legislative_materials", "立法资料", True,
+                 [("legislative_interpretations", "法规解读")]),
+                ("legal_updates", "法律动态", True, []),
             ]
 
-            for cat_key, cat_label, nav_needed in categories:
+            for cat_key, cat_label, nav_needed, sub_tabs in categories:
                 print(f"正在处理分类: {cat_label} ({cat_key})")
 
                 # 第一步: 进入首页
@@ -654,7 +710,7 @@ async def run(
                     print(f"跳过分类 '{cat_label}': 搜索失败。")
                     continue
 
-                # 第四步: 收集结果
+                # 第四步: 收集默认子分类的结果
                 items_needed = max_items if max_items > 0 else 100
                 all_seen_urls = set(r.url for r in all_records)
 
@@ -662,6 +718,22 @@ async def run(
 
                 all_records.extend(found_recs)
                 print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
+
+                # 第五步: 处理额外的子分类标签（如"法规解读"）
+                # 在同一个搜索结果页上切换子分类标签并收集结果
+                for sub_key, sub_label in sub_tabs:
+                    print(f"正在处理子分类: {sub_label} ({sub_key})")
+                    sub_ok = await click_sub_tab(page, sub_label)
+                    if not sub_ok:
+                        print(f"跳过子分类 '{sub_label}': 切换失败。")
+                        continue
+
+                    all_seen_urls = set(r.url for r in all_records)
+                    sub_recs = await click_load_more_until_done(
+                        page, all_seen_urls, sub_key, max_items=items_needed
+                    )
+                    all_records.extend(sub_recs)
+                    print(f"为 {sub_label} 找到 {len(sub_recs)} 条记录")
 
             # 第五步: 访问每条记录的详情页，获取制定机关、效力位阶
             print(f"开始获取 {len(all_records)} 条记录的详情信息...")
