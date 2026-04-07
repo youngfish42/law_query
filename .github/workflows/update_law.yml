@@ -6,9 +6,9 @@ on:
   workflow_dispatch:      # 允许手动触发
     inputs:
       keyword:
-        description: '检索关键词 (默认为 "智能")'
+        description: '检索关键词（留空则依次检索所有默认关键词）'
         required: false
-        default: '智能'
+        default: ''
       enrich_existing:
         description: '仅补全已有条目的制定机关/效力位阶（不执行新搜索，true/false）'
         required: false
@@ -37,20 +37,29 @@ jobs:
 
       - name: Run query script
         run: |
-          KEYWORD="${{ inputs.keyword }}"
-          if [ -z "$KEYWORD" ]; then
-            KEYWORD="智能"
-          fi
           ENRICH="${{ inputs.enrich_existing }}"
-          echo "Current keyword: $KEYWORD"
           echo "Enrich existing: $ENRICH"
 
           if [ "$ENRICH" = "true" ]; then
             # 仅补全已有条目的详情信息，不执行新搜索
             python query.py --enrich-existing --out "法规.csv"
           else
-            # 执行常规搜索并更新
-            python query.py --keyword "$KEYWORD" --out "法规.csv"
+            # 确定要查询的关键词列表
+            KEYWORD_INPUT="${{ inputs.keyword }}"
+            if [ -n "$KEYWORD_INPUT" ]; then
+              # 手动触发时指定了关键词，只查询该关键词
+              KEYWORDS=("$KEYWORD_INPUT")
+            else
+              # 未指定关键词时，依次查询所有默认关键词（每个关键词重新启动浏览器）
+              KEYWORDS=("智能" "数智化" "AI" "高质量数据" "大模型" "算力" "工业互联网" "新型产业" "未来产业" "数字化")
+            fi
+
+            for KW in "${KEYWORDS[@]}"; do
+              echo "=========================================="
+              echo "正在查询关键词: $KW"
+              echo "=========================================="
+              python query.py --keyword "$KW" --out "法规.csv"
+            done
           fi
           
       - name: Generate Update Time
