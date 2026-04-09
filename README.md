@@ -54,6 +54,7 @@ python query.py --keyword 智能 --out results.csv --out-json results.json
 ## 常用参数
 
 - `--keyword`：检索词（默认：智能）
+- `--filter-keywords`：标题二次过滤关键词，逗号分隔（默认使用 `--keyword` 的值）；仅标题中包含至少一个关键词的条目才会被保存
 - `--headless / --headed`：无头/有头模式（默认无头）
 - `--max-items`：最多查询多少条（0 表示不限制，默认 0；对四个分类都生效）
 - `--slow-mo`：调试用，放慢浏览器操作（毫秒）

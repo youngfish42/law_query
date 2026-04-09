@@ -538,6 +538,21 @@ async def click_load_more_until_done(
     return results
 
 
+def filter_records_by_keywords(records: List[Record], keywords: List[str]) -> List[Record]:
+    """对记录列表按关键词清单进行二次过滤，仅保留标题中包含至少一个关键词的记录。"""
+    normalized = [kw.strip().lower() for kw in keywords if kw.strip()]
+    if not normalized:
+        return records
+    filtered = []
+    for r in records:
+        title_lower = r.title.lower()
+        if any(kw in title_lower for kw in normalized):
+            filtered.append(r)
+        else:
+            print(f"DEBUG: 关键词过滤 - 跳过记录 '{r.title[:50]}' (标题不含任何关键词)")
+    return filtered
+
+
 def write_csv(path: Path, rows: Iterable[Record]) -> None:
     # 读取已有数据进行合并
     merged_map = {}
@@ -662,6 +677,7 @@ async def run(
     slow_mo: int,
     max_items: int,
     user_data_dir: Optional[Path],
+    filter_keywords: Optional[List[str]] = None,
 ) -> List[Record]:
     async with async_playwright() as p:
         launch_kwargs = {
@@ -757,6 +773,12 @@ async def run(
             print(f"开始获取 {len(all_records)} 条记录的详情信息...")
             await enrich_records_with_details(page, all_records, existing_data)
 
+            # 第六步: 按关键词清单对标题进行二次过滤
+            effective_filter_keywords = filter_keywords if filter_keywords else [keyword]
+            print(f"关键词二次过滤前: {len(all_records)} 条记录，过滤关键词: {effective_filter_keywords}")
+            all_records = filter_records_by_keywords(all_records, effective_filter_keywords)
+            print(f"关键词二次过滤后: {len(all_records)} 条记录")
+
             # 输出
             write_csv(out_csv, all_records)
             if out_json:
@@ -772,6 +794,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--keyword", default="智能", help="检索词（默认：智能）")
     ap.add_argument("--out", default="法规.csv", help="输出 CSV 路径")
     ap.add_argument("--out-json", default=None, help="输出 JSON 路径（可选）")
+    ap.add_argument(
+        "--filter-keywords",
+        default=None,
+        help="标题二次过滤关键词，逗号分隔（默认使用 --keyword 的值）",
+    )
 
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--headless", action="store_true", help="无头模式（默认）")
@@ -798,6 +825,11 @@ def main() -> None:
     out_csv = Path(args.out)
     out_json = Path(args.out_json) if args.out_json else None
     user_data_dir = Path(args.user_data_dir) if args.user_data_dir else None
+    filter_keywords = (
+        [kw.strip() for kw in args.filter_keywords.split(",") if kw.strip()]
+        if args.filter_keywords
+        else None
+    )
 
     if args.enrich_existing:
         records = asyncio.run(
@@ -821,6 +853,7 @@ def main() -> None:
             slow_mo=args.slow_mo,
             max_items=args.max_items,
             user_data_dir=user_data_dir,
+            filter_keywords=filter_keywords,
         )
     )
 
