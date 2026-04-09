@@ -230,12 +230,78 @@
             text-decoration: none;
         }
 
-        @media (max-width: 600px) {
-            body { padding: 10px; }
-            .container { padding: 10px; }
-            h1 { font-size: 1.5em; }
-            .controls { flex-direction: column; align-items: stretch; }
+        @media (max-width: 768px) {
+            body { padding: 8px; }
+            .container { padding: 12px; border-radius: 6px; }
+            h1 { font-size: 1.4em; margin-bottom: 6px; }
+            .timestamp { font-size: 0.8em; margin-bottom: 12px; }
+            .controls { flex-direction: column; align-items: stretch; gap: 8px; }
             .search-box-container { max-width: 100%; }
+            .stats { font-size: 0.85em; }
+
+            /* Hide the table header on mobile */
+            .table-responsive { border: none; }
+            table { min-width: unset; }
+            table thead { display: none; }
+
+            /* Transform each row into a card */
+            table tbody tr {
+                display: block;
+                margin-bottom: 10px;
+                border: 1px solid var(--border-color);
+                border-radius: 6px;
+                padding: 10px 12px;
+                background: white;
+            }
+            table tbody tr:last-child { margin-bottom: 0; }
+            table tbody tr:hover { background-color: #f0f4ff; }
+
+            /* Each cell becomes a labeled row */
+            table tbody td {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                border-bottom: none;
+                padding: 4px 0;
+                font-size: 0.9em;
+                gap: 8px;
+            }
+            table tbody td::before {
+                content: attr(data-label);
+                font-weight: 600;
+                color: #6c757d;
+                font-size: 0.85em;
+                white-space: nowrap;
+                flex-shrink: 0;
+                min-width: 60px;
+            }
+            /* Title cell: full width, no flex row layout */
+            table tbody td.cell-title {
+                display: block;
+                padding-bottom: 6px;
+                border-bottom: 1px solid #eee;
+                margin-bottom: 4px;
+            }
+            table tbody td.cell-title::before {
+                display: none;
+            }
+            table tbody td.cell-title a {
+                font-size: 1em;
+                line-height: 1.4;
+            }
+
+            /* Pagination improvements for touch */
+            .pagination { gap: 4px; margin-top: 16px; }
+            .pagination button {
+                padding: 10px 14px;
+                font-size: 1em;
+                min-width: 44px;
+                min-height: 44px;
+            }
+            .pagination span { font-size: 0.85em; margin: 0 4px; }
+
+            /* RSS button full width on very small screens */
+            .rss-btn { justify-content: center; }
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -261,11 +327,11 @@
             <table id="lawTable">
                 <thead>
                     <tr>
-                        <th class="col-category" data-column="category" onclick="handleSort('category')">分类</th>
-                        <th data-column="title" onclick="handleSort('title')">标题</th>
-                        <th class="col-date" data-column="publish_date" onclick="handleSort('publish_date')">公布日期</th>
-                        <th class="col-authority" data-column="issuing_authority" onclick="handleSort('issuing_authority')">制定机关</th>
-                        <th class="col-hierarchy" data-column="legal_hierarchy" onclick="handleSort('legal_hierarchy')">效力位阶</th>
+                        <th scope="col" data-column="title" onclick="handleSort('title')">标题</th>
+                        <th scope="col" class="col-category" data-column="category" onclick="handleSort('category')">分类</th>
+                        <th scope="col" class="col-date" data-column="publish_date" onclick="handleSort('publish_date')">公布日期</th>
+                        <th scope="col" class="col-authority" data-column="issuing_authority" onclick="handleSort('issuing_authority')">制定机关</th>
+                        <th scope="col" class="col-hierarchy" data-column="legal_hierarchy" onclick="handleSort('legal_hierarchy')">效力位阶</th>
                     </tr>
                 </thead>
                 <tbody id="tableBody">
@@ -425,11 +491,11 @@
                 const categoryText = categoryMap[categoryKey] || row.category || '-';
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td>${categoryText}</td>
-                    <td><a href="${row.url}" target="_blank" title="${row.title}">${row.title || '无标题'}</a></td>
-                    <td class="col-date">${row.publish_date || '-'}</td>
-                    <td class="col-authority">${row.issuing_authority || '-'}</td>
-                    <td class="col-hierarchy">${row.legal_hierarchy || '-'}</td>
+                    <td class="cell-title" data-label="标题"><a href="${row.url}" target="_blank" rel="noopener noreferrer" title="${row.title}">${row.title || '无标题'}</a></td>
+                    <td data-label="分类">${categoryText}</td>
+                    <td class="col-date" data-label="公布日期">${row.publish_date || '-'}</td>
+                    <td class="col-authority" data-label="制定机关">${row.issuing_authority || '-'}</td>
+                    <td class="col-hierarchy" data-label="效力位阶">${row.legal_hierarchy || '-'}</td>
                 `;
                 tbody.appendChild(tr);
             });
