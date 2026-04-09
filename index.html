@@ -230,6 +230,12 @@
             text-decoration: none;
         }
 
+        /* Mobile sort select - hidden on desktop, shown on mobile */
+        .mobile-sort-select { display: none; }
+
+        /* Field labels inside cards - hidden on desktop (thead provides context) */
+        .cell-label { display: none; }
+
         @media (max-width: 768px) {
             body { padding: 8px; }
             .container { padding: 12px; border-radius: 6px; }
@@ -238,6 +244,18 @@
             .controls { flex-direction: column; align-items: stretch; gap: 8px; }
             .search-box-container { max-width: 100%; }
             .stats { font-size: 0.85em; }
+
+            /* Show mobile sort control */
+            .mobile-sort-select {
+                display: block;
+                width: 100%;
+                padding: 10px;
+                border: 1px solid var(--border-color);
+                border-radius: 4px;
+                font-size: 14px;
+                background-color: white;
+                color: #333;
+            }
 
             /* Hide the table header on mobile */
             .table-responsive { border: none; }
@@ -256,7 +274,23 @@
             table tbody tr:last-child { margin-bottom: 0; }
             table tbody tr:hover { background-color: #f0f4ff; }
 
-            /* Each cell becomes a labeled row */
+            /* Empty state row: override card styles */
+            table tbody tr.empty-row {
+                border: none;
+                border-radius: 0;
+                padding: 0;
+                background: none;
+                margin: 0;
+            }
+            table tbody tr.empty-row:hover { background: none; }
+            table tbody tr.empty-row td {
+                display: block;
+                text-align: center;
+                padding: 20px;
+                font-size: 1em;
+            }
+
+            /* Each cell becomes a flex row: label left, value right */
             table tbody td {
                 display: flex;
                 justify-content: space-between;
@@ -266,8 +300,10 @@
                 font-size: 0.9em;
                 gap: 8px;
             }
-            table tbody td::before {
-                content: attr(data-label);
+
+            /* Show real DOM field labels on mobile */
+            .cell-label {
+                display: inline-block;
                 font-weight: 600;
                 color: #6c757d;
                 font-size: 0.85em;
@@ -275,15 +311,13 @@
                 flex-shrink: 0;
                 min-width: 60px;
             }
+
             /* Title cell: full width, no flex row layout */
             table tbody td.cell-title {
                 display: block;
                 padding-bottom: 6px;
                 border-bottom: 1px solid #eee;
                 margin-bottom: 4px;
-            }
-            table tbody td.cell-title::before {
-                display: none;
             }
             table tbody td.cell-title a {
                 font-size: 1em;
@@ -317,6 +351,15 @@
                 <span class="search-icon">🔍</span>
             </div>
             <div class="stats" id="statsInfo">共加载 0 条数据</div>
+            <select id="mobileSortSelect" class="mobile-sort-select" onchange="handleMobileSort()" aria-label="排序方式">
+                <option value="publish_date_desc">公布日期（最新）</option>
+                <option value="publish_date_asc">公布日期（最旧）</option>
+                <option value="title_asc">标题（升序）</option>
+                <option value="title_desc">标题（降序）</option>
+                <option value="category_asc">分类（升序）</option>
+                <option value="issuing_authority_asc">制定机关（升序）</option>
+                <option value="legal_hierarchy_asc">效力位阶（升序）</option>
+            </select>
             <a class="rss-btn" href="feed.xml" title="RSS订阅 - 获取最新法规更新">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" aria-hidden="true"><path d="M6.18 15.64a2.18 2.18 0 0 1 2.18 2.18C8.36 19.01 7.38 20 6.18 20C4.98 20 4 19.01 4 17.82a2.18 2.18 0 0 1 2.18-2.18M4 4.44A15.56 15.56 0 0 1 19.56 20h-2.83A12.73 12.73 0 0 0 4 7.27V4.44m0 5.66a9.9 9.9 0 0 1 9.9 9.9h-2.83A7.07 7.07 0 0 0 4 12.93V10.1z"/></svg>
                 RSS订阅
@@ -464,6 +507,23 @@
                     th.classList.add(`sort-${currentSort.direction}`);
                 }
             });
+            // Sync mobile sort select with current sort state
+            const mobileSelect = document.getElementById('mobileSortSelect');
+            const sortVal = `${currentSort.column}_${currentSort.direction}`;
+            if (mobileSelect.querySelector(`option[value="${sortVal}"]`)) {
+                mobileSelect.value = sortVal;
+            }
+        }
+
+        function handleMobileSort() {
+            const val = document.getElementById('mobileSortSelect').value;
+            const lastUnderscore = val.lastIndexOf('_');
+            currentSort = {
+                column: val.substring(0, lastUnderscore),
+                direction: val.substring(lastUnderscore + 1)
+            };
+            currentPage = 1;
+            applyFilterAndSort();
         }
 
         function renderTable() {
@@ -481,7 +541,7 @@
             const pageData = displayedData.slice(start, end);
 
             if (pageData.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 20px;">未找到匹配的数据</td></tr>';
+                tbody.innerHTML = '<tr class="empty-row"><td colspan="5" style="text-align:center; padding: 20px;">未找到匹配的数据</td></tr>';
                 renderPagination(0);
                 return;
             }
@@ -491,11 +551,11 @@
                 const categoryText = categoryMap[categoryKey] || row.category || '-';
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td class="cell-title" data-label="标题"><a href="${row.url}" target="_blank" rel="noopener noreferrer" title="${row.title}">${row.title || '无标题'}</a></td>
-                    <td data-label="分类">${categoryText}</td>
-                    <td class="col-date" data-label="公布日期">${row.publish_date || '-'}</td>
-                    <td class="col-authority" data-label="制定机关">${row.issuing_authority || '-'}</td>
-                    <td class="col-hierarchy" data-label="效力位阶">${row.legal_hierarchy || '-'}</td>
+                    <td class="cell-title"><a href="${row.url}" target="_blank" rel="noopener noreferrer" title="${row.title}">${row.title || '无标题'}</a></td>
+                    <td><span class="cell-label">分类</span><span>${categoryText}</span></td>
+                    <td class="col-date"><span class="cell-label">公布日期</span><span>${row.publish_date || '-'}</span></td>
+                    <td class="col-authority"><span class="cell-label">制定机关</span><span>${row.issuing_authority || '-'}</span></td>
+                    <td class="col-hierarchy"><span class="cell-label">效力位阶</span><span>${row.legal_hierarchy || '-'}</span></td>
                 `;
                 tbody.appendChild(tr);
             });
