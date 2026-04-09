@@ -2,7 +2,7 @@ name: Update Law Query Data
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 每天 UTC 0:00 (北京时间 8:00) 运行
+    - cron: '30 22 * * *' # 每天 UTC 22:30 (北京时间次日 6:30) 运行
   workflow_dispatch:      # 允许手动触发
     inputs:
       keyword:
