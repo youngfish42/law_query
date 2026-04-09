@@ -50,6 +50,56 @@ def normalize_category(value: str) -> str:
     return CATEGORY_NAME_MAP.get((value or "").strip(), (value or "").strip())
 
 
+def normalize_title(value: str) -> str:
+    """标准化标题，用于按标题去重。"""
+    if not value:
+        return ""
+    return re.sub(r"\s+", " ", value.replace("\u3000", " ")).strip()
+
+
+def merge_record_fields(base: Record, incoming: Record) -> Record:
+    """合并同标题记录，优先保留较完整/较新的信息。"""
+    if incoming.publish_date and incoming.publish_date > base.publish_date:
+        base.publish_date = incoming.publish_date
+        if incoming.url:
+            base.url = incoming.url
+        if incoming.category:
+            base.category = normalize_category(incoming.category)
+
+    if not base.url and incoming.url:
+        base.url = incoming.url
+    if not base.category and incoming.category:
+        base.category = normalize_category(incoming.category)
+    if not base.issuing_authority and incoming.issuing_authority:
+        base.issuing_authority = incoming.issuing_authority
+    if not base.legal_hierarchy and incoming.legal_hierarchy:
+        base.legal_hierarchy = incoming.legal_hierarchy
+
+    return base
+
+
+def deduplicate_records_by_title(records: Iterable[Record]) -> List[Record]:
+    """按标题去重；同标题时合并字段，避免信息丢失。"""
+    merged: dict = {}
+    for r in records:
+        key = normalize_title(r.title)
+        if not key:
+            # 标题为空时回退到 URL，避免异常数据相互覆盖。
+            key = f"__url__:{r.url}"
+        if key in merged:
+            merge_record_fields(merged[key], r)
+        else:
+            merged[key] = Record(
+                category=normalize_category(r.category),
+                title=normalize_title(r.title) or r.title,
+                url=r.url,
+                publish_date=r.publish_date,
+                issuing_authority=r.issuing_authority,
+                legal_hierarchy=r.legal_hierarchy,
+            )
+    return list(merged.values())
+
+
 async def goto_home(page: Page) -> None:
     try:
         # 增加超时时间到 60 秒
@@ -481,7 +531,7 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
 
 async def click_load_more_until_done(
     page: Page,
-    seen_keys: set,
+    seen_title_keys: set,
     category: str,
     max_items: int,
 ) -> List[Record]:
@@ -491,9 +541,9 @@ async def click_load_more_until_done(
         recs = await extract_visible_records(page, category)
         added = 0
         for r in recs:
-            key = (r.url or "")
-            if key and key not in seen_keys:
-                seen_keys.add(key)
+            key = normalize_title(r.title)
+            if key and key not in seen_title_keys:
+                seen_title_keys.add(key)
                 results.append(r)
                 added += 1
         return added
@@ -570,20 +620,32 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                         issuing_authority=row.get("issuing_authority", ""),
                         legal_hierarchy=row.get("legal_hierarchy", ""),
                     )
-                    if r.url:
-                        merged_map[r.url] = r
+                    key = normalize_title(r.title)
+                    if not key:
+                        continue
+                    if key in merged_map:
+                        merge_record_fields(merged_map[key], r)
+                    else:
+                        merged_map[key] = r
         except Exception as e:
             print(f"Warning: 读取现有CSV合并失败: {e}")
 
-    # 合并新查询到的数据（优先使用新数据，但保留已有的详情字段）
+    # 合并新查询到的数据（按标题去重，并保留/补全详情字段）
     for r in rows:
-        if r.url in merged_map:
-            old = merged_map[r.url]
-            if not r.issuing_authority and old.issuing_authority:
-                r.issuing_authority = old.issuing_authority
-            if not r.legal_hierarchy and old.legal_hierarchy:
-                r.legal_hierarchy = old.legal_hierarchy
-        merged_map[r.url] = r
+        key = normalize_title(r.title)
+        if not key:
+            continue
+        if key in merged_map:
+            merge_record_fields(merged_map[key], r)
+        else:
+            merged_map[key] = Record(
+                category=normalize_category(r.category),
+                title=normalize_title(r.title) or r.title,
+                url=r.url,
+                publish_date=r.publish_date,
+                issuing_authority=r.issuing_authority,
+                legal_hierarchy=r.legal_hierarchy,
+            )
 
     # 按 publish_date 降序排序（由新到旧）
     sorted_records = sorted(
@@ -746,9 +808,9 @@ async def run(
 
                 # 第四步: 收集默认子分类的结果
                 items_needed = max_items if max_items > 0 else 100
-                all_seen_urls = set(r.url for r in all_records)
+                all_seen_titles = set(normalize_title(r.title) for r in all_records if normalize_title(r.title))
 
-                found_recs = await click_load_more_until_done(page, all_seen_urls, cat_label, max_items=items_needed)
+                found_recs = await click_load_more_until_done(page, all_seen_titles, cat_label, max_items=items_needed)
 
                 all_records.extend(found_recs)
                 print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
@@ -762,14 +824,16 @@ async def run(
                         print(f"跳过子分类 '{sub_label}': 切换失败。")
                         continue
 
-                    all_seen_urls = set(r.url for r in all_records)
+                    all_seen_titles = set(normalize_title(r.title) for r in all_records if normalize_title(r.title))
                     sub_recs = await click_load_more_until_done(
-                        page, all_seen_urls, sub_label, max_items=items_needed
+                        page, all_seen_titles, sub_label, max_items=items_needed
                     )
                     all_records.extend(sub_recs)
                     print(f"为 {sub_label} 找到 {len(sub_recs)} 条记录")
 
             # 第五步: 访问每条记录的详情页，获取制定机关、效力位阶
+            all_records = deduplicate_records_by_title(all_records)
+            print(f"按标题去重后待补全详情记录数: {len(all_records)}")
             print(f"开始获取 {len(all_records)} 条记录的详情信息...")
             await enrich_records_with_details(page, all_records, existing_data)
 
@@ -777,6 +841,7 @@ async def run(
             effective_filter_keywords = filter_keywords if filter_keywords else [keyword]
             print(f"关键词二次过滤前: {len(all_records)} 条记录，过滤关键词: {effective_filter_keywords}")
             all_records = filter_records_by_keywords(all_records, effective_filter_keywords)
+            all_records = deduplicate_records_by_title(all_records)
             print(f"关键词二次过滤后: {len(all_records)} 条记录")
 
             # 输出
