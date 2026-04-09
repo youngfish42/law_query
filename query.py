@@ -540,12 +540,13 @@ async def click_load_more_until_done(
 
 def filter_records_by_keywords(records: List[Record], keywords: List[str]) -> List[Record]:
     """对记录列表按关键词清单进行二次过滤，仅保留标题中包含至少一个关键词的记录。"""
-    if not keywords:
+    normalized = [kw.strip().lower() for kw in keywords if kw.strip()]
+    if not normalized:
         return records
     filtered = []
     for r in records:
         title_lower = r.title.lower()
-        if any(kw.lower() in title_lower for kw in keywords):
+        if any(kw in title_lower for kw in normalized):
             filtered.append(r)
         else:
             print(f"DEBUG: 关键词过滤 - 跳过记录 '{r.title[:50]}' (标题不含任何关键词)")
