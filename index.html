@@ -230,6 +230,90 @@
             text-decoration: none;
         }
 
+        /* Category badges */
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.78em;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .badge-central              { background: #dbeafe; color: #1d4ed8; }
+        .badge-local                { background: #dcfce7; color: #15803d; }
+        .badge-legislative_materials     { background: #fef9c3; color: #92400e; }
+        .badge-legislative_interpretations { background: #ede9fe; color: #6d28d9; }
+        .badge-legal_updates        { background: #fce7f3; color: #be185d; }
+        .badge-default              { background: #f1f5f9; color: #475569; }
+
+        /* Clear button inside search box */
+        .search-clear {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            color: #adb5bd;
+            line-height: 1;
+            padding: 0;
+            display: none;
+        }
+        .search-clear:hover { color: #495057; }
+        .search-box-container input { padding-right: 36px; }
+
+        /* Page jump input */
+        .page-jump {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.85em;
+            color: #495057;
+        }
+        .page-jump input {
+            width: 48px;
+            padding: 6px 4px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            text-align: center;
+            font-size: 0.9em;
+        }
+        .page-jump button {
+            padding: 6px 10px;
+            border: 1px solid var(--border-color);
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background-color 0.2s;
+        }
+        .page-jump button:hover { background-color: #e9ecef; }
+
+        /* Back-to-top button */
+        #backToTop {
+            position: fixed;
+            bottom: 24px;
+            right: 20px;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+            z-index: 100;
+            transition: opacity 0.3s, background-color 0.2s;
+        }
+        #backToTop:hover { background-color: var(--hover-color); }
+        #backToTop.visible { display: flex; }
+
         /* Mobile sort select - hidden on desktop, shown on mobile */
         .mobile-sort-select { display: none; }
 
@@ -267,9 +351,10 @@
                 display: block;
                 margin-bottom: 10px;
                 border: 1px solid var(--border-color);
-                border-radius: 6px;
-                padding: 10px 12px;
+                border-radius: 8px;
+                padding: 12px 14px;
                 background: white;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.06);
             }
             table tbody tr:last-child { margin-bottom: 0; }
             table tbody tr:hover { background-color: #f0f4ff; }
@@ -281,6 +366,7 @@
                 padding: 0;
                 background: none;
                 margin: 0;
+                box-shadow: none;
             }
             table tbody tr.empty-row:hover { background: none; }
             table tbody tr.empty-row td {
@@ -315,17 +401,20 @@
             /* Title cell: full width, no flex row layout */
             table tbody td.cell-title {
                 display: block;
-                padding-bottom: 6px;
+                padding-bottom: 8px;
                 border-bottom: 1px solid #eee;
-                margin-bottom: 4px;
+                margin-bottom: 6px;
             }
             table tbody td.cell-title a {
                 font-size: 1em;
-                line-height: 1.4;
+                line-height: 1.5;
             }
 
+            /* Badges: right-align inside cell flex */
+            table tbody td .badge { font-size: 0.82em; }
+
             /* Pagination improvements for touch */
-            .pagination { gap: 4px; margin-top: 16px; }
+            .pagination { gap: 4px; margin-top: 16px; flex-wrap: wrap; }
             .pagination button {
                 padding: 10px 14px;
                 font-size: 1em;
@@ -334,8 +423,15 @@
             }
             .pagination span { font-size: 0.85em; margin: 0 4px; }
 
+            /* Hide page jump on very small screens to save space; keep on ≥480px */
+            .page-jump { display: none; }
+
             /* RSS button full width on very small screens */
             .rss-btn { justify-content: center; }
+        }
+
+        @media (min-width: 480px) and (max-width: 768px) {
+            .page-jump { display: flex; }
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -348,6 +444,7 @@
         <div class="controls">
             <div class="search-box-container">
                 <input type="text" id="searchInput" placeholder="搜索标题、分类、日期、机关或位阶..." oninput="handleSearch()">
+                <button class="search-clear" id="searchClear" onclick="clearSearch()" aria-label="清除搜索">✕</button>
                 <span class="search-icon">🔍</span>
             </div>
             <div class="stats" id="statsInfo">共加载 0 条数据</div>
@@ -390,14 +487,24 @@
             <span id="pageInfo">第 1 / 1 页</span>
             <button onclick="changePage(1)" id="nextBtn">下一页</button>
             <button onclick="goToPage(-1)" id="lastBtn" title="末页">&raquo;</button>
+            <div class="page-jump">
+                <span>跳转</span>
+                <input type="number" id="pageJumpInput" min="1" value="1" aria-label="跳转到页">
+                <button onclick="handlePageJump()">GO</button>
+            </div>
         </div>
     </div>
+
+    <button id="backToTop" onclick="scrollToTop()" aria-label="返回顶部" title="返回顶部">↑</button>
 
     <script>
         let allData = [];
         let displayedData = [];
         let currentPage = 1;
-        const itemsPerPage = 50;
+        const ITEMS_DESKTOP = 50;
+        const ITEMS_MOBILE  = 20;
+        function isMobile() { return window.innerWidth <= 768; }
+        function getItemsPerPage() { return isMobile() ? ITEMS_MOBILE : ITEMS_DESKTOP; }
         let currentSort = { column: 'publish_date', direction: 'desc' }; // Default sort
         const categoryMap = {
             central: '中央法规',
@@ -410,6 +517,24 @@
         document.addEventListener('DOMContentLoaded', init);
 
         async function init() {
+            // Back-to-top button visibility
+            window.addEventListener('scroll', function() {
+                const btn = document.getElementById('backToTop');
+                if (window.scrollY > 300) {
+                    btn.classList.add('visible');
+                } else {
+                    btn.classList.remove('visible');
+                }
+            }, { passive: true });
+
+            // Search clear button visibility
+            document.getElementById('searchInput').addEventListener('input', updateClearBtn);
+
+            // Page jump on Enter key
+            document.getElementById('pageJumpInput').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') handlePageJump();
+            });
+
             // Load timestamp
             try {
                 const metaResponse = await fetch('meta.json');
@@ -443,7 +568,32 @@
 
         function handleSearch() {
             currentPage = 1;
+            updateClearBtn();
             applyFilterAndSort();
+        }
+
+        function updateClearBtn() {
+            const input = document.getElementById('searchInput');
+            const clearBtn = document.getElementById('searchClear');
+            const searchIcon = document.querySelector('.search-icon');
+            if (input.value) {
+                clearBtn.style.display = 'block';
+                searchIcon.style.display = 'none';
+            } else {
+                clearBtn.style.display = 'none';
+                searchIcon.style.display = '';
+            }
+        }
+
+        function clearSearch() {
+            document.getElementById('searchInput').value = '';
+            currentPage = 1;
+            updateClearBtn();
+            applyFilterAndSort();
+        }
+
+        function scrollToTop() {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
         function handleSort(column) {
@@ -526,18 +676,24 @@
             applyFilterAndSort();
         }
 
+        function getCategoryBadgeClass(key) {
+            const known = ['central','local','legislative_materials','legislative_interpretations','legal_updates'];
+            return known.includes(key) ? `badge-${key}` : 'badge-default';
+        }
+
         function renderTable() {
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
 
-            const totalPages = Math.ceil(displayedData.length / itemsPerPage) || 1;
+            const perPage = getItemsPerPage();
+            const totalPages = Math.ceil(displayedData.length / perPage) || 1;
             
             // Ensure valid page
             if (currentPage > totalPages) currentPage = totalPages;
             if (currentPage < 1) currentPage = 1;
 
-            const start = (currentPage - 1) * itemsPerPage;
-            const end = start + itemsPerPage;
+            const start = (currentPage - 1) * perPage;
+            const end = start + perPage;
             const pageData = displayedData.slice(start, end);
 
             if (pageData.length === 0) {
@@ -549,10 +705,11 @@
             pageData.forEach(row => {
                 const categoryKey = (row.category || '').toLowerCase();
                 const categoryText = categoryMap[categoryKey] || row.category || '-';
+                const badgeClass = getCategoryBadgeClass(categoryKey);
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td class="cell-title"><a href="${row.url}" target="_blank" rel="noopener noreferrer" title="${row.title}">${row.title || '无标题'}</a></td>
-                    <td><span class="cell-label">分类</span><span>${categoryText}</span></td>
+                    <td><span class="cell-label">分类</span><span class="badge ${badgeClass}">${categoryText}</span></td>
                     <td class="col-date"><span class="cell-label">公布日期</span><span>${row.publish_date || '-'}</span></td>
                     <td class="col-authority"><span class="cell-label">制定机关</span><span>${row.issuing_authority || '-'}</span></td>
                     <td class="col-hierarchy"><span class="cell-label">效力位阶</span><span>${row.legal_hierarchy || '-'}</span></td>
@@ -570,29 +727,47 @@
             document.getElementById('prevBtn').disabled = currentPage === 1;
             document.getElementById('nextBtn').disabled = currentPage === totalPages || totalPages === 0;
             document.getElementById('lastBtn').disabled = currentPage === totalPages || totalPages === 0;
+
+            const jumpInput = document.getElementById('pageJumpInput');
+            jumpInput.max = totalPages;
+            jumpInput.value = currentPage;
+        }
+
+        function handlePageJump() {
+            const perPage = getItemsPerPage();
+            const totalPages = Math.ceil(displayedData.length / perPage) || 1;
+            const input = document.getElementById('pageJumpInput');
+            let target = parseInt(input.value, 10);
+            if (isNaN(target) || target < 1) target = 1;
+            if (target > totalPages) target = totalPages;
+            currentPage = target;
+            renderTable();
+            document.querySelector('.table-responsive')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         function changePage(delta) {
-            const totalPages = Math.ceil(displayedData.length / itemsPerPage) || 1;
+            const perPage = getItemsPerPage();
+            const totalPages = Math.ceil(displayedData.length / perPage) || 1;
             let newPage = currentPage + delta;
             
             if (newPage >= 1 && newPage <= totalPages) {
                 currentPage = newPage;
                 renderTable();
                 // Scroll to top of table container
-                document.querySelector('.table-responsive').scrollIntoView({ behavior: 'smooth', block: 'start' });
+                document.querySelector('.table-responsive')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
         }
 
         function goToPage(target) {
-             const totalPages = Math.ceil(displayedData.length / itemsPerPage) || 1;
+             const perPage = getItemsPerPage();
+             const totalPages = Math.ceil(displayedData.length / perPage) || 1;
              if (target === -1) {
                  currentPage = totalPages;
              } else {
                  currentPage = target;
              }
              renderTable();
-             document.querySelector('.table-responsive').scrollIntoView({ behavior: 'smooth', block: 'start' });
+             document.querySelector('.table-responsive')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     </script>
 </body>
