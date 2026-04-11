@@ -301,6 +301,17 @@
                 gap: 8px;
             }
 
+            /* Override desktop column widths so card cells stretch full width */
+            table tbody td.col-authority,
+            table tbody td.col-hierarchy {
+                width: auto;
+            }
+
+            /* Right-align value text so wrapping looks correct */
+            table tbody td > span:not(.cell-label) {
+                text-align: right;
+            }
+
             /* Show real DOM field labels on mobile */
             .cell-label {
                 display: inline-block;
