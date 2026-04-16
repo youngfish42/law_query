@@ -518,22 +518,37 @@
 
         async function init() {
             // Back-to-top button visibility
-            window.addEventListener('scroll', function() {
-                const btn = document.getElementById('backToTop');
+            const backToTopBtn = document.getElementById('backToTop');
+            function updateBackToTopVisibility() {
                 if (window.scrollY > 300) {
-                    btn.classList.add('visible');
+                    backToTopBtn.classList.add('visible');
                 } else {
-                    btn.classList.remove('visible');
+                    backToTopBtn.classList.remove('visible');
                 }
-            }, { passive: true });
-
-            // Search clear button visibility
-            document.getElementById('searchInput').addEventListener('input', updateClearBtn);
+            }
+            window.addEventListener('scroll', updateBackToTopVisibility, { passive: true });
+            updateBackToTopVisibility();
 
             // Page jump on Enter key
             document.getElementById('pageJumpInput').addEventListener('keydown', function(e) {
                 if (e.key === 'Enter') handlePageJump();
             });
+
+            // Re-render on resize / orientation change to update items-per-page
+            let resizeTimer;
+            window.addEventListener('resize', function() {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(function() {
+                    currentPage = 1;
+                    renderTable();
+                }, 150);
+            }, { passive: true });
+            window.addEventListener('orientationchange', function() {
+                setTimeout(function() {
+                    currentPage = 1;
+                    renderTable();
+                }, 200);
+            }, { passive: true });
 
             // Load timestamp
             try {
@@ -677,8 +692,18 @@
         }
 
         function getCategoryBadgeClass(key) {
+            // CSV stores Chinese category names; map them to badge classes
+            const chineseMap = {
+                '中央法规': 'central',
+                '地方法规': 'local',
+                '立法资料': 'legislative_materials',
+                '法规解读': 'legislative_interpretations',
+                '法律动态': 'legal_updates'
+            };
+            // Accept both Chinese names (from CSV) and English keys
+            const normalised = chineseMap[key] || key;
             const known = ['central','local','legislative_materials','legislative_interpretations','legal_updates'];
-            return known.includes(key) ? `badge-${key}` : 'badge-default';
+            return known.includes(normalised) ? `badge-${normalised}` : 'badge-default';
         }
 
         function renderTable() {
@@ -721,16 +746,24 @@
         }
 
         function renderPagination(totalPages) {
-            document.getElementById('pageInfo').textContent = `第 ${currentPage} / ${totalPages} 页`;
-            
-            document.getElementById('firstBtn').disabled = currentPage === 1;
-            document.getElementById('prevBtn').disabled = currentPage === 1;
-            document.getElementById('nextBtn').disabled = currentPage === totalPages || totalPages === 0;
-            document.getElementById('lastBtn').disabled = currentPage === totalPages || totalPages === 0;
+            const isEmpty = totalPages === 0;
+            document.getElementById('pageInfo').textContent = isEmpty
+                ? '第 0 / 0 页'
+                : `第 ${currentPage} / ${totalPages} 页`;
+
+            document.getElementById('firstBtn').disabled = currentPage === 1 || isEmpty;
+            document.getElementById('prevBtn').disabled = currentPage === 1 || isEmpty;
+            document.getElementById('nextBtn').disabled = currentPage === totalPages || isEmpty;
+            document.getElementById('lastBtn').disabled = currentPage === totalPages || isEmpty;
 
             const jumpInput = document.getElementById('pageJumpInput');
-            jumpInput.max = totalPages;
-            jumpInput.value = currentPage;
+            const jumpBtn = jumpInput.nextElementSibling;
+            jumpInput.disabled = isEmpty;
+            jumpBtn.disabled = isEmpty;
+            if (!isEmpty) {
+                jumpInput.max = totalPages;
+                jumpInput.value = currentPage;
+            }
         }
 
         function handlePageJump() {
