@@ -73,8 +73,8 @@ jobs:
 
       - name: Commit and push changes
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          git config --local user.email "youngfish42@users.noreply.github.com"
+          git config --local user.name "youngfish42"
           git add 法规.csv meta.json feed.xml
           
           # Check for staged changes
