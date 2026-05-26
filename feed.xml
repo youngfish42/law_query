@@ -5,7 +5,7 @@
     <link>https://youngfish42.github.io/law_query/</link>
     <description>AI、数智化、大模型等相关法规的最新更新订阅</description>
     <language>zh-CN</language>
-    <lastBuildDate>Tue, 26 May 2026 07:34:00 +0800</lastBuildDate>
+    <lastBuildDate>Wed, 27 May 2026 07:39:00 +0800</lastBuildDate>
     <ttl>1440</ttl>
     <atom:link href="https://youngfish42.github.io/law_query/feed.xml" rel="self" type="application/rss+xml" />
     <item>
@@ -182,6 +182,14 @@
       <description>分类：法规解读；公布日期：2026.05；制定机关：国家互联网信息办公室；效力位阶：部门规范性文件</description>
       <guid isPermaLink="true">https://www.pkulaw.com/lawexplanation/e9c32d2ef090d3a72e095b1533a8d48dbdfb.html?way=listView</guid>
       <category>法规解读</category>
+      <pubDate>Fri, 01 May 2026 00:00:00 +0800</pubDate>
+    </item>
+    <item>
+      <title>交通运输部海事局关于公开征求《船舶智能监控系统技术指南(2.0)(征求意见稿)》意见的通知</title>
+      <link>https://www.pkulaw.com/protocol/b21c343dc96e3655d5cc64dc7b9d7f17bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
+      <description>分类：立法资料；公布日期：2026.05；制定机关：中华人民共和国海事局；效力位阶：部门规范性文件</description>
+      <guid isPermaLink="true">https://www.pkulaw.com/protocol/b21c343dc96e3655d5cc64dc7b9d7f17bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
+      <category>立法资料</category>
       <pubDate>Fri, 01 May 2026 00:00:00 +0800</pubDate>
     </item>
     <item>
@@ -799,14 +807,6 @@
       <guid isPermaLink="true">https://www.pkulaw.com/lar/dbe5649f94ca6c8fec35bf1d163fbbc3bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
       <category>地方法规</category>
       <pubDate>Mon, 02 Mar 2026 00:00:00 +0800</pubDate>
-    </item>
-    <item>
-      <title>蚌埠市促进智能传感产业发展条例</title>
-      <link>https://www.pkulaw.com/lar/97d8ea7de10d5483783874bb5717e351bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
-      <description>分类：地方法规；公布日期：2026.03.01；制定机关：蚌埠市人大(含常委会)；效力位阶：设区的市地方性法规</description>
-      <guid isPermaLink="true">https://www.pkulaw.com/lar/97d8ea7de10d5483783874bb5717e351bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
-      <category>地方法规</category>
-      <pubDate>Sun, 01 Mar 2026 00:00:00 +0800</pubDate>
     </item>
   </channel>
 </rss>
