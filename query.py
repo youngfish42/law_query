@@ -45,59 +45,171 @@ CATEGORY_NAME_MAP = {
     "法律动态": "法律动态",
 }
 
+URL_PATH_TO_CATEGORY = {
+    "chl": "中央法规",
+    "lar": "地方法规",
+    "news": "法律动态",
+    "protocol": "立法资料",
+    "lawexplanation": "法规解读",
+}
+
 
 def normalize_category(value: str) -> str:
     return CATEGORY_NAME_MAP.get((value or "").strip(), (value or "").strip())
 
 
 def normalize_title(value: str) -> str:
-    """标准化标题，用于按标题去重。"""
+    """标准化标题（用于展示）：压缩多余空白为单空格。"""
     if not value:
         return ""
     return re.sub(r"\s+", " ", value.replace("\u3000", " ")).strip()
 
 
+def title_dedup_key(value: str) -> str:
+    """生成去重键：删除全部空白字符，避免‘中间多/少一个空格’造成漏合并。"""
+    if not value:
+        return ""
+    return re.sub(r"\s+", "", value.replace("\u3000", ""))
+
+
+def url_path_key(url: str) -> str:
+    """提取 URL 的 host+path（忽略 query/fragment），作为同一篇法规的稳定标识。"""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url)
+        if not p.netloc or not p.path:
+            return ""
+        return f"{p.netloc}{p.path}".lower().rstrip("/")
+    except Exception:
+        return ""
+
+
+def enforce_category_by_url(category: str, url: str) -> str:
+    """URL 第一段（chl/lar/news/protocol/lawexplanation）是北大法宝的确定性分类，
+    若与传入 category 矛盾，以 URL 为准并打印警告。"""
+    if not url:
+        return normalize_category(category)
+    try:
+        from urllib.parse import urlparse
+        seg = urlparse(url).path.strip("/").split("/", 1)[0].lower()
+    except Exception:
+        return normalize_category(category)
+    expected = URL_PATH_TO_CATEGORY.get(seg)
+    current = normalize_category(category)
+    if expected and current and expected != current:
+        print(f"Warning: 分类与 URL 段不一致，已校正 '{current}' -> '{expected}' ({url})")
+        return expected
+    return expected or current
+
+
 def merge_record_fields(base: Record, incoming: Record) -> Record:
-    """合并同标题记录，优先保留较完整/较新的信息。"""
+    """合并同记录字段，优先保留较完整/较新的信息。"""
     if incoming.publish_date and incoming.publish_date > base.publish_date:
         base.publish_date = incoming.publish_date
         if incoming.url:
             base.url = incoming.url
         if incoming.category:
-            base.category = normalize_category(incoming.category)
+            base.category = enforce_category_by_url(incoming.category, incoming.url or base.url)
 
     if not base.url and incoming.url:
         base.url = incoming.url
     if not base.category and incoming.category:
-        base.category = normalize_category(incoming.category)
+        base.category = enforce_category_by_url(incoming.category, incoming.url or base.url)
     if not base.issuing_authority and incoming.issuing_authority:
         base.issuing_authority = incoming.issuing_authority
     if not base.legal_hierarchy and incoming.legal_hierarchy:
         base.legal_hierarchy = incoming.legal_hierarchy
 
+    # 同步根据当前 URL 复核 base.category，纠正历史脏数据。
+    base.category = enforce_category_by_url(base.category, base.url)
     return base
 
 
+def _merge_into_maps(record: Record, by_title: dict, by_url: dict) -> None:
+    """双 key 合并辅助：先按 URL path 合，再按标题（去全部空白）合，最后回填两个索引。"""
+    record.category = enforce_category_by_url(record.category, record.url)
+    record.issuing_authority = infer_authority_for_news(record)
+
+    tkey = title_dedup_key(record.title)
+    ukey = url_path_key(record.url)
+
+    target: Optional[Record] = None
+    if ukey and ukey in by_url:
+        target = by_url[ukey]
+    elif tkey and tkey in by_title:
+        target = by_title[tkey]
+
+    if target is None:
+        # 新条目：标题归一为展示用单空格写法；类别按 URL 复核。
+        new_rec = Record(
+            category=enforce_category_by_url(record.category, record.url),
+            title=normalize_title(record.title) or record.title,
+            url=record.url,
+            publish_date=record.publish_date,
+            issuing_authority=record.issuing_authority,
+            legal_hierarchy=record.legal_hierarchy,
+        )
+        if tkey:
+            by_title[tkey] = new_rec
+        if ukey:
+            by_url[ukey] = new_rec
+        # 同时把无 key 的条目也放进 by_title 兜底，避免相互覆盖。
+        if not tkey and not ukey:
+            by_title[f"__noid__:{id(new_rec)}"] = new_rec
+        return
+
+    merge_record_fields(target, record)
+    # 合并后双向回填，避免后续命中另一 key 时再次创建。
+    if tkey and tkey not in by_title:
+        by_title[tkey] = target
+    if ukey and ukey not in by_url:
+        by_url[ukey] = target
+
+
 def deduplicate_records_by_title(records: Iterable[Record]) -> List[Record]:
-    """按标题去重；同标题时合并字段，避免信息丢失。"""
-    merged: dict = {}
+    """按 (URL path, 标题去全部空白) 双 key 去重，同记录时合并字段、不丢信息。"""
+    by_title: dict = {}
+    by_url: dict = {}
     for r in records:
-        key = normalize_title(r.title)
-        if not key:
-            # 标题为空时回退到 URL，避免异常数据相互覆盖。
-            key = f"__url__:{r.url}"
-        if key in merged:
-            merge_record_fields(merged[key], r)
-        else:
-            merged[key] = Record(
-                category=normalize_category(r.category),
-                title=normalize_title(r.title) or r.title,
-                url=r.url,
-                publish_date=r.publish_date,
-                issuing_authority=r.issuing_authority,
-                legal_hierarchy=r.legal_hierarchy,
-            )
-    return list(merged.values())
+        _merge_into_maps(r, by_title, by_url)
+    # 用 id 去重得到唯一 Record 列表（多个 key 可能指向同一对象）。
+    seen = set()
+    out: List[Record] = []
+    for rec in list(by_title.values()) + list(by_url.values()):
+        if id(rec) in seen:
+            continue
+        seen.add(id(rec))
+        out.append(rec)
+    return out
+
+
+# === 法律动态（/news/）等条目的轻量字段推断 ===
+_NEWS_AUTHORITY_PATTERNS = [
+    re.compile(r"^(国家[\u4e00-\u9fa5]{2,12}?(?:总局|局|委员会|办公室|部|署|院))"),
+    re.compile(r"^(最高人民(?:法院|检察院))"),
+    re.compile(r"^([\u4e00-\u9fa5]{2,4}省[\u4e00-\u9fa5]{2,15}?(?:厅|局|委员会|办公室))"),
+    re.compile(r"^([\u4e00-\u9fa5]{2,4}市[\u4e00-\u9fa5]{2,15}?(?:厅|局|委员会|办公室|法院))"),
+    re.compile(r"^([\u4e00-\u9fa5]{2,15}?(?:部|委员会|办公室|总局|总署))"),
+]
+
+
+def infer_authority_for_news(record: Record) -> str:
+    """仅当 category 为「法律动态」且 issuing_authority 为空时，
+    从标题前缀正则推断机关；推断不到则保持空，不写入猜测数据。"""
+    if record.issuing_authority:
+        return record.issuing_authority
+    if normalize_category(record.category) != "法律动态":
+        return record.issuing_authority
+    title = (record.title or "").strip()
+    if not title:
+        return ""
+    for pat in _NEWS_AUTHORITY_PATTERNS:
+        m = pat.match(title)
+        if m:
+            return m.group(1)
+    return ""
 
 
 async def goto_home(page: Page) -> None:
@@ -604,14 +716,14 @@ def filter_records_by_keywords(records: List[Record], keywords: List[str]) -> Li
 
 
 def write_csv(path: Path, rows: Iterable[Record]) -> None:
-    # 读取已有数据进行合并
-    merged_map = {}
+    # 读取已有数据进行合并（使用双 key：URL path + 标题去全部空白）
+    by_title: dict = {}
+    by_url: dict = {}
     if path.exists():
         try:
             with path.open("r", encoding="utf-8-sig") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    # 构造 Record 对象，处理可能缺失的字段
                     r = Record(
                         category=normalize_category(row.get("category", "")),
                         title=row.get("title", ""),
@@ -620,36 +732,30 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                         issuing_authority=row.get("issuing_authority", ""),
                         legal_hierarchy=row.get("legal_hierarchy", ""),
                     )
-                    key = normalize_title(r.title)
-                    if not key:
+                    if not (title_dedup_key(r.title) or url_path_key(r.url)):
                         continue
-                    if key in merged_map:
-                        merge_record_fields(merged_map[key], r)
-                    else:
-                        merged_map[key] = r
+                    _merge_into_maps(r, by_title, by_url)
         except Exception as e:
             print(f"Warning: 读取现有CSV合并失败: {e}")
 
-    # 合并新查询到的数据（按标题去重，并保留/补全详情字段）
+    # 合并新查询到的数据
     for r in rows:
-        key = normalize_title(r.title)
-        if not key:
+        if not (title_dedup_key(r.title) or url_path_key(r.url)):
             continue
-        if key in merged_map:
-            merge_record_fields(merged_map[key], r)
-        else:
-            merged_map[key] = Record(
-                category=normalize_category(r.category),
-                title=normalize_title(r.title) or r.title,
-                url=r.url,
-                publish_date=r.publish_date,
-                issuing_authority=r.issuing_authority,
-                legal_hierarchy=r.legal_hierarchy,
-            )
+        _merge_into_maps(r, by_title, by_url)
+
+    # 通过 id 去重得到唯一 Record 列表（多个 key 可能指向同一对象）
+    seen = set()
+    unique_records: List[Record] = []
+    for rec in list(by_title.values()) + list(by_url.values()):
+        if id(rec) in seen:
+            continue
+        seen.add(id(rec))
+        unique_records.append(rec)
 
     # 按 publish_date 降序排序（由新到旧）
     sorted_records = sorted(
-        merged_map.values(),
+        unique_records,
         key=lambda x: x.publish_date,
         reverse=True
     )
