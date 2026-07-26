@@ -3,12 +3,21 @@ import asyncio
 import csv
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, List, Optional
 
 from playwright.async_api import async_playwright, Page
+
+
+CN_TZ = timezone(timedelta(hours=8))
+
+
+def now_cn() -> datetime:
+    """返回北京时间（Asia/Shanghai）的当前时间，避免 CI 使用 UTC 时错判‘本月’。"""
+    return datetime.now(CN_TZ)
 
 
 BASE_URL = "https://www.pkulaw.com"
@@ -25,12 +34,29 @@ class Record:
     category: str  # "中央法规" | "地方法规" | "立法资料" | "法规解读" | "法律动态"
     title: str
     url: str
-    publish_date: str  # YYYY.MM.DD
+    publish_date: str  # YYYY.MM.DD，来源于详情/列表的“公布”日期
     issuing_authority: str = ""  # 制定机关
     legal_hierarchy: str = ""   # 效力位阶
+    effective_date: str = ""    # YYYY.MM.DD，来源于列表的“施行/实施/生效”日期
 
 
 PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}(?:\.\d{2})?)\s*公布")
+
+# 兼容性日期抓取：站点当前统一使用 YYYY.MM.DD/YYYY.MM，这里额外识别少见的
+# YYYY-MM-DD / YYYY/MM/DD 字面，返回时统一为点号格式。仅在主正则未命中时兜底。
+_ALT_DATE_LABELED_RE = re.compile(
+    r"(\d{4})[.\-/](\d{1,2})(?:[.\-/](\d{1,2}))?\s*(公布|发布|印发|施行|实施|生效)"
+)
+
+
+def normalize_date_token(year: str, month: str, day: str = "") -> str:
+    """把 (YYYY, M, D) 拼成规范化的 'YYYY.MM.DD' 或 'YYYY.MM'。
+    月/日不足两位时前补 0；若 day 为空则只返回 'YYYY.MM'。"""
+    y = year.strip()
+    m = month.strip().zfill(2)
+    if day and day.strip():
+        return f"{y}.{m}.{day.strip().zfill(2)}"
+    return f"{y}.{m}"
 
 CATEGORY_NAME_MAP = {
     "central": "中央法规",
@@ -66,10 +92,18 @@ def normalize_title(value: str) -> str:
 
 
 def title_dedup_key(value: str) -> str:
-    """生成去重键：删除全部空白字符，避免‘中间多/少一个空格’造成漏合并。"""
+    """生成去重键：仅做保守归一，用于识别‘明显是同一条但排版微异’的标题。
+
+    保守策略（不合并任何语义上不同的条目）：
+    1. NFKC 归一：把全角字母/数字/半角括号统一为半角（例如"（"→"("、"Ａ"→"A"）；
+    2. 去除所有空白字符（含全角空格 U+3000）。
+    不做书名号/中文括号 → 半角的替换，不删除任何标点，避免把"《A》"与"「A」"
+    这类可能真的不同的题名合并。
+    """
     if not value:
         return ""
-    return re.sub(r"\s+", "", value.replace("\u3000", ""))
+    normalized = unicodedata.normalize("NFKC", value.replace("\u3000", ""))
+    return re.sub(r"\s+", "", normalized)
 
 
 def url_path_key(url: str) -> str:
@@ -121,6 +155,8 @@ def merge_record_fields(base: Record, incoming: Record) -> Record:
         base.issuing_authority = incoming.issuing_authority
     if not base.legal_hierarchy and incoming.legal_hierarchy:
         base.legal_hierarchy = incoming.legal_hierarchy
+    if not base.effective_date and incoming.effective_date:
+        base.effective_date = incoming.effective_date
 
     # 同步根据当前 URL 复核 base.category，纠正历史脏数据。
     base.category = enforce_category_by_url(base.category, base.url)
@@ -150,6 +186,7 @@ def _merge_into_maps(record: Record, by_title: dict, by_url: dict) -> None:
             publish_date=record.publish_date,
             issuing_authority=record.issuing_authority,
             legal_hierarchy=record.legal_hierarchy,
+            effective_date=record.effective_date,
         )
         if tkey:
             by_title[tkey] = new_rec
@@ -186,18 +223,40 @@ def deduplicate_records_by_title(records: Iterable[Record]) -> List[Record]:
 
 
 # === 法律动态（/news/）等条目的轻量字段推断 ===
-_NEWS_AUTHORITY_PATTERNS = [
+# 优先尝试“标题前缀”匹配（准确度最高），若失败再退而求其次在标题任意位置寻找机关名。
+_NEWS_AUTHORITY_PREFIX_PATTERNS = [
     re.compile(r"^(国家[\u4e00-\u9fa5]{2,12}?(?:总局|局|委员会|办公室|部|署|院))"),
     re.compile(r"^(最高人民(?:法院|检察院))"),
-    re.compile(r"^([\u4e00-\u9fa5]{2,4}省[\u4e00-\u9fa5]{2,15}?(?:厅|局|委员会|办公室))"),
-    re.compile(r"^([\u4e00-\u9fa5]{2,4}市[\u4e00-\u9fa5]{2,15}?(?:厅|局|委员会|办公室|法院))"),
+    re.compile(r"^([\u4e00-\u9fa5]{2,4}省[\u4e00-\u9fa5]{2,15}?(?:厅|局|委员会|办公室|人民政府|政府|法院|检察院))"),
+    re.compile(r"^([\u4e00-\u9fa5]{2,4}市[\u4e00-\u9fa5]{2,15}?(?:厅|局|委员会|办公室|人民政府|政府|法院|检察院|互联网法院))"),
+    re.compile(r"^([\u4e00-\u9fa5]{2,10}自治区[\u4e00-\u9fa5]{0,15}?(?:厅|局|委员会|办公室|人民政府|政府|法院|检察院)?)"),
     re.compile(r"^([\u4e00-\u9fa5]{2,15}?(?:部|委员会|办公室|总局|总署))"),
+]
+# 省/直辖市/自治区简称，用于识别“辽宁出台…”“云南推广…”这类以地区简称开头、
+# 紧跟动作词的地方新闻（不含“省/市/自治区”后缀）。
+_PROVINCE_ALIASES = (
+    "北京|上海|天津|重庆|"
+    "河北|山西|辽宁|吉林|黑龙江|江苏|浙江|安徽|福建|江西|山东|河南|湖北|湖南|"
+    "广东|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|"
+    "内蒙古|广西|西藏|宁夏|新疆|香港|澳门"
+)
+# 主谓句式：机关名后紧跟“发布/印发/公布/出台/召开/组织/联合/答记者问”等动作词。
+_NEWS_AUTHORITY_INLINE_PATTERNS = [
+    re.compile(r"([\u4e00-\u9fa5]{2,8}(?:互联网法院|人民法院|人民检察院|法院|检察院))"),
+    re.compile(r"([\u4e00-\u9fa5]{2,6}(?:市政府|省政府|人民政府))"),
+    re.compile(r"([\u4e00-\u9fa5]{2,4}(?:省|市|自治区|特别行政区)(?:人民政府|政府|司法厅|司法局|教育厅|教育局|工业和信息化厅|工业和信息化局|大数据管理局|通信管理局)?)(?=\S*?(?:发布|印发|公布|出台|召开|通过))"),
+    re.compile(r"(国务院[\u4e00-\u9fa5]{0,10}(?:办公厅|办公室)?)(?=\S*?(?:发布|印发|公布|出台|决定))"),
+    re.compile(r"([\u4e00-\u9fa5]{2,10}?(?:总局|总署|部|委员会|办公厅|办公室))(?=[、，,]?\s*[\u4e00-\u9fa5]*(?:发布|印发|公布|出台|联合))"),
+    re.compile(
+        r"^(" + _PROVINCE_ALIASES + r")"
+        r"(?=[\u4e00-\u9fa5]*?(?:出台|印发|发布|公布|推广|推进|启动|部署|开展|上线|通过|六大|十大|三大|五大))"
+    ),
 ]
 
 
 def infer_authority_for_news(record: Record) -> str:
     """仅当 category 为「法律动态」且 issuing_authority 为空时，
-    从标题前缀正则推断机关；推断不到则保持空，不写入猜测数据。"""
+    从标题正则推断机关；推断不到则保持空，不写入猜测数据。"""
     if record.issuing_authority:
         return record.issuing_authority
     if normalize_category(record.category) != "法律动态":
@@ -205,8 +264,12 @@ def infer_authority_for_news(record: Record) -> str:
     title = (record.title or "").strip()
     if not title:
         return ""
-    for pat in _NEWS_AUTHORITY_PATTERNS:
+    for pat in _NEWS_AUTHORITY_PREFIX_PATTERNS:
         m = pat.match(title)
+        if m:
+            return m.group(1)
+    for pat in _NEWS_AUTHORITY_INLINE_PATTERNS:
+        m = pat.search(title)
         if m:
             return m.group(1)
     return ""
@@ -404,26 +467,49 @@ async def search_by_title(page: Page, keyword: str) -> bool:
         return False
 
 async def fetch_detail_info(page: Page, url: str) -> dict:
-    """访问法规详情页，获取制定机关和效力位阶。"""
+    """访问法规详情页，获取制定机关和效力位阶。
+
+    对「法律动态」详情页（URL 含 /news/）而言，页面没有“制定机关/效力位阶”字段，
+    但通常带有“新闻来源：XXX”这一稳定信息，用作 issuing_authority；
+    legal_hierarchy 对法律动态而言无意义，返回空即可。"""
     result = {"issuing_authority": "", "legal_hierarchy": ""}
+    is_news = "/news/" in url
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
         # Wait until the expected metadata labels appear in the page body,
         # rather than sleeping for a fixed duration.
+        wait_expr = (
+            "() => { const text = document.body ? document.body.innerText : '';"
+            " return text.includes('新闻来源') || text.includes('新闻分类'); }"
+            if is_news
+            else "() => { const text = document.body ? document.body.innerText : '';"
+            " return text.includes('制定机关') || text.includes('效力位阶'); }"
+        )
         try:
-            await page.wait_for_function(
-                """() => {
-                    const text = document.body ? document.body.innerText : '';
-                    return text.includes('制定机关') ||
-                              text.includes('效力位阶');
-                }""",
-                timeout=5000,
-            )
+            await page.wait_for_function(wait_expr, timeout=5000)
         except Exception:
             # If the expected labels do not appear in time, continue and let the
             # extraction logic attempt to parse whatever content is available.
             pass
+
+        if is_news:
+            source = await page.evaluate(
+                """() => {
+                    const items = document.querySelectorAll('li,dt,dd,span,p,div');
+                    for (const el of items) {
+                        if (el.children.length > 3) continue;
+                        const t = el.innerText ? el.innerText.trim() : '';
+                        if (!t) continue;
+                        const m = t.match(/^新闻来源[：:]\\s*(.+)$/);
+                        if (m) return m[1].trim();
+                    }
+                    return '';
+                }"""
+            )
+            if source:
+                result["issuing_authority"] = source
+            return result
 
         # Use JavaScript to walk the DOM and find label→value pairs.
         # pkulaw.com renders these fields in a table/dl where each label cell
@@ -496,6 +582,7 @@ def load_existing_records(path: Path) -> dict:
                         publish_date=row.get("publish_date", ""),
                         issuing_authority=row.get("issuing_authority", ""),
                         legal_hierarchy=row.get("legal_hierarchy", ""),
+                        effective_date=row.get("effective_date", ""),
                     )
     except Exception as e:
         print(f"Warning: 读取现有CSV失败: {e}")
@@ -507,7 +594,10 @@ async def enrich_records_with_details(
     records: List[Record],
     existing: dict,
 ) -> None:
-    """为每条记录抓取详情页信息（若已有则跳过）。"""
+    """为每条记录抓取详情页信息（若已有则跳过）。
+
+    「法律动态」类目仅关心 issuing_authority；legal_hierarchy 在该类目页面不存在，
+    不作为“未完成”的判据，以免每次都重复访问 news 详情页。"""
     for r in records:
         # Reuse any detail info that was already fetched in a previous run.
         # Only skip the fetch when all target detail fields are already populated.
@@ -518,7 +608,11 @@ async def enrich_records_with_details(
             if old.legal_hierarchy:
                 r.legal_hierarchy = old.legal_hierarchy
 
-        if r.issuing_authority and r.legal_hierarchy:
+        is_news = normalize_category(r.category) == "法律动态"
+        already_done = bool(r.issuing_authority) if is_news else bool(
+            r.issuing_authority and r.legal_hierarchy
+        )
+        if already_done:
             print(f"复用已有详情: {r.title[:40]}")
             continue
 
@@ -528,36 +622,6 @@ async def enrich_records_with_details(
         r.legal_hierarchy = r.legal_hierarchy or detail.get("legal_hierarchy", "")
         # Brief pause to be polite to the server
         await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
-
-
-async def apply_this_month_effective_filter(page: Page) -> None:
-    # 强制等待一下让页面稳定
-    await page.wait_for_timeout(1000)
-
-    # 左侧"相关提示"里点击 "本月生效"
-    # 如果找不到可能是因为没有本月生效的法规，或者 UI 变了
-    # 我们直接找可见的文本链接
-    links = page.locator('a:has-text("本月生效")')
-    count = await links.count()
-    clicked = False
-
-    for i in range(count):
-        lk = links.nth(i)
-        if await lk.is_visible():
-            # 简单假设可见的那个就是我们要点的（通常是左侧栏那个）
-            try:
-                await lk.click(timeout=5000)
-                clicked = True
-                break
-            except Exception as e:
-                print(f"点击可见的过滤链接失败: {e}")
-
-    if clicked:
-        # 点击后等待刷新
-        await page.wait_for_timeout(2000)
-        await page.locator('input[name="recordList"]').first.wait_for(timeout=30000)
-    else:
-        print("Warning: 未找到或无法点击 '本月生效' 过滤链接。")
 
 
 async def extract_visible_records(page: Page, category: str) -> List[Record]:
@@ -603,17 +667,29 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
         publish_date = ""
         effective_date = ""
 
-        # 匹配公布日期 "YYYY.MM.DD 公布"
+        # 匹配公布日期 "YYYY.MM.DD 公布" 或 "YYYY.MM 公布"
         m_pub = PUBLISH_RE.search(text)
         if m_pub:
             publish_date = m_pub.group(1)
 
-        # 匹配实施日期 "YYYY.MM.DD 实施" 或类似
-        m_eff = re.search(r"(\d{4}\.\d{2}\.\d{2})\s*(?:实施|生效|施行)", text)
+        # 匹配实施日期 "YYYY.MM.DD 实施/生效/施行"，兼容 "YYYY.MM 施行"
+        m_eff = re.search(r"(\d{4}\.\d{2}(?:\.\d{2})?)\s*(?:实施|生效|施行)", text)
         if m_eff:
             effective_date = m_eff.group(1)
 
+        # 兼容兜底：若主正则未命中（例如站点偶发使用 YYYY-MM-DD/YYYY/MM/DD），
+        # 从带标签的日期文本中提取，并统一转换为 YYYY.MM.DD 点号格式。
+        if not publish_date or not effective_date:
+            for y, mo, d, label in _ALT_DATE_LABELED_RE.findall(text):
+                token = normalize_date_token(y, mo, d)
+                if label in ("公布", "发布", "印发") and not publish_date:
+                    publish_date = token
+                elif label in ("施行", "实施", "生效") and not effective_date:
+                    effective_date = token
+
         # 备选：如果没有标注日期，找任意日期（优先 YYYY.MM.DD，其次 YYYY.MM）
+        # 注意：这里只回填 publish_date，绝不把无标签日期塞给 effective_date，
+        # 避免"实施日期"污染"公布日期"。
         if not publish_date and not effective_date:
              date_m = re.search(r"(\d{4}\.\d{2}\.\d{2})", text)
              if date_m:
@@ -624,17 +700,28 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
                  if date_m2:
                      publish_date = date_m2.group(1)
 
-        # 当前月份前缀
-        current_month = datetime.now().strftime("%Y.%m")
+        # 当前月份前缀（北京时间）
+        current_month = now_cn().strftime("%Y.%m")
 
-        # 我们只返回匹配"本月"的记录
+        # “本月”判定：优先看施行日期（若已到 CI 当月生效），否则看公布日期。
+        # 但写入 Record 的 publish_date 严格来自“公布”匹配，effective_date 独立保留，
+        # 避免下游把施行日期当成公布日期。
         date_to_check = effective_date if effective_date else publish_date
         if not date_to_check.startswith(current_month):
             print(f"DEBUG: 跳过记录 '{title}' - 日期 {date_to_check} 不在 {current_month} 中")
             continue
 
-        print(f"DEBUG: 添加记录到分类 '{category}': 标题='{title[:40]}', 日期={date_to_check}")
-        out.append(Record(category=category, title=title, url=url, publish_date=date_to_check))
+        print(
+            f"DEBUG: 添加记录到分类 '{category}': 标题='{title[:40]}', "
+            f"公布={publish_date or '-'}, 施行={effective_date or '-'}"
+        )
+        out.append(Record(
+            category=category,
+            title=title,
+            url=url,
+            publish_date=publish_date,
+            effective_date=effective_date,
+        ))
 
 
     print(f"DEBUG: 分类 '{category}' 共提取 {len(out)} 条本月记录")
@@ -646,14 +733,20 @@ async def click_load_more_until_done(
     seen_title_keys: set,
     category: str,
     max_items: int,
+    max_click_rounds: int = 20,
 ) -> List[Record]:
+    """连续点击列表页的“更多”按钮，直到没有新增或触及安全上限。
+
+    max_click_rounds 是保护性上限，避免网站在某些异常状况下返回同一批数据
+    却仍旧显示“更多”按钮，导致本函数无限循环。默认 20 轮足以覆盖数百条记录。
+    """
     results: List[Record] = []
 
     async def collect_once() -> int:
         recs = await extract_visible_records(page, category)
         added = 0
         for r in recs:
-            key = normalize_title(r.title)
+            key = title_dedup_key(r.title)
             if key and key not in seen_title_keys:
                 seen_title_keys.add(key)
                 results.append(r)
@@ -662,8 +755,14 @@ async def click_load_more_until_done(
 
     await collect_once()
 
+    rounds = 0
     while True:
         if max_items > 0 and len(results) >= max_items:
+            break
+        if rounds >= max_click_rounds:
+            print(
+                f"Warning: 已达‘更多’按钮最大点击轮次 {max_click_rounds}，停止翻页以避免死循环。"
+            )
             break
 
         # 页面上有很多"更多"，我们只点列表区域里带 icon 的"更多"按钮
@@ -679,10 +778,11 @@ async def click_load_more_until_done(
             # 没有更多了 / 按钮不可点击
             break
 
+        rounds += 1
         # 等待新内容加载：recordList 数量变化或稍等
         await page.wait_for_timeout(20000) # 增加到20秒以便AJAX加载
         added = await collect_once()
-        print(f"更多加载: +{added} 条记录")
+        print(f"更多加载: +{added} 条记录 (第 {rounds}/{max_click_rounds} 轮)")
 
         # 如果本轮没有新增，认为加载结束，避免死循环
         #（网站可能返回同一批内容）
@@ -731,6 +831,7 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                         publish_date=row.get("publish_date", ""),
                         issuing_authority=row.get("issuing_authority", ""),
                         legal_hierarchy=row.get("legal_hierarchy", ""),
+                        effective_date=row.get("effective_date", ""),
                     )
                     if not (title_dedup_key(r.title) or url_path_key(r.url)):
                         continue
@@ -766,7 +867,8 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
         w = csv.DictWriter(
             f,
             fieldnames=["category", "title", "url", "publish_date",
-                        "issuing_authority", "legal_hierarchy"],
+                        "issuing_authority", "legal_hierarchy",
+                        "effective_date"],
         )
         w.writeheader()
         for r in sorted_records:
@@ -791,10 +893,13 @@ async def run_enrich_existing(
         print("CSV 文件中没有找到任何记录。")
         return []
 
-    to_enrich = [
-        r for r in existing.values()
-        if not (r.issuing_authority and r.legal_hierarchy)
-    ]
+    def _needs_enrich(r: Record) -> bool:
+        # 「法律动态」详情页不含“效力位阶”，只要制定机关（映射自“新闻来源”）已补全即可。
+        if normalize_category(r.category) == "法律动态":
+            return not r.issuing_authority
+        return not (r.issuing_authority and r.legal_hierarchy)
+
+    to_enrich = [r for r in existing.values() if _needs_enrich(r)]
 
     if not to_enrich:
         print("所有现有记录已包含完整的制定机关/效力位阶信息，无需补全。")
@@ -871,7 +976,7 @@ async def run(
             existing_data = load_existing_records(out_csv)
 
             # 使用当月作为Python端过滤
-            current_month_prefix = datetime.now().strftime("%Y.%m")
+            current_month_prefix = now_cn().strftime("%Y.%m")
             print(f"目标月份: {current_month_prefix}")
 
             # 定义分类及其标签以匹配标签页
@@ -914,7 +1019,7 @@ async def run(
 
                 # 第四步: 收集默认子分类的结果
                 items_needed = max_items if max_items > 0 else 100
-                all_seen_titles = set(normalize_title(r.title) for r in all_records if normalize_title(r.title))
+                all_seen_titles = set(title_dedup_key(r.title) for r in all_records if title_dedup_key(r.title))
 
                 found_recs = await click_load_more_until_done(page, all_seen_titles, cat_label, max_items=items_needed)
 
@@ -930,7 +1035,7 @@ async def run(
                         print(f"跳过子分类 '{sub_label}': 切换失败。")
                         continue
 
-                    all_seen_titles = set(normalize_title(r.title) for r in all_records if normalize_title(r.title))
+                    all_seen_titles = set(title_dedup_key(r.title) for r in all_records if title_dedup_key(r.title))
                     sub_recs = await click_load_more_until_done(
                         page, all_seen_titles, sub_label, max_items=items_needed
                     )

@@ -743,10 +743,13 @@
                 const categoryText = categoryMap[categoryKey] || row.category || '-';
                 const badgeClass = getCategoryBadgeClass(categoryKey);
                 const tr = document.createElement('tr');
+                const effectiveDateHtml = (row.effective_date && row.effective_date !== row.publish_date)
+                    ? `<small style="color:#666;">（${row.effective_date} 施行）</small>`
+                    : '';
                 tr.innerHTML = `
                     <td class="cell-title"><a href="${row.url}" target="_blank" rel="noopener noreferrer" title="${row.title}">${row.title || '无标题'}</a></td>
                     <td><span class="cell-label">分类</span><span class="badge ${badgeClass}">${categoryText}</span></td>
-                    <td class="col-date"><span class="cell-label">公布日期</span><span>${row.publish_date || '-'}</span></td>
+                    <td class="col-date"><span class="cell-label">公布日期</span><span>${row.publish_date || '-'}${effectiveDateHtml}</span></td>
                     <td class="col-authority"><span class="cell-label">制定机关</span><span>${row.issuing_authority || '-'}</span></td>
                     <td class="col-hierarchy"><span class="cell-label">效力位阶</span><span>${row.legal_hierarchy || '-'}</span></td>
                 `;

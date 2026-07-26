@@ -96,6 +96,7 @@ def build_feed(records: list[dict], last_updated: datetime) -> ET.Element:
         authority = row.get("issuing_authority") or ""
         hierarchy = row.get("legal_hierarchy") or ""
         publish_date_str = row.get("publish_date") or ""
+        effective_date_str = row.get("effective_date") or ""
 
         title = row["title"]
         url = row["url"]
@@ -106,6 +107,8 @@ def build_feed(records: list[dict], last_updated: datetime) -> ET.Element:
             desc_parts.append(f"分类：{category_text}")
         if publish_date_str:
             desc_parts.append(f"公布日期：{publish_date_str}")
+        if effective_date_str and effective_date_str != publish_date_str:
+            desc_parts.append(f"施行日期：{effective_date_str}")
         if authority:
             desc_parts.append(f"制定机关：{authority}")
         if hierarchy:
