@@ -95,7 +95,7 @@ CI 默认依次抓取的关键词列表（位于 workflow 中）：
 
 - Workflow 触发：每天 UTC 22:30（北京时间次日 06:30）；也可在 Actions 页手动 `workflow_dispatch`，支持 `keyword` 与 `enrich_existing` 输入。
 - Workflow 会 `git add 法规.csv meta.json feed.xml` 并自动 commit & push，**请不要**让脚本写入其他需要提交的文件，除非同步更新 workflow。
-- 提交者身份固定为 `youngfish42@users.noreply.github.com`，不要修改。
+- 修改 workflow 里的自动提交步骤时，注意保留其中已配置的 `git config user.email / user.name`，不要随意替换 bot 身份。
 
 ## 9. 协作准则（给 AI 的硬性约束）
 
