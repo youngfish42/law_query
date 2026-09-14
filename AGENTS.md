@@ -63,6 +63,9 @@ python query.py --keyword 智能 --out 法规.csv --out-json results.json
 # 仅补全已有条目的制定机关 / 效力位阶
 python query.py --enrich-existing --out 法规.csv
 
+# 回填历史月份（YYYY.MM），用于补抓遗漏数据
+python query.py --keyword 智能 --month 2026.06 --out 法规.csv
+
 # 调试（有头浏览器 + 放慢）
 python query.py --headed --slow-mo 200 --max-items 50
 
