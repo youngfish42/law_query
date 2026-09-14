@@ -704,7 +704,7 @@ async def enrich_records_with_details(
         await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
 
 
-async def extract_visible_records(page: Page, category: str) -> List[Record]:
+async def extract_visible_records(page: Page, category: str, month_prefix: str) -> List[Record]:
     # pkulaw.com 使用两种不同的搜索结果布局：
     # - 中央法规/地方法规: div.col 容器，.t h4 a 标题，div.info 日期
     # - 立法资料/法律动态: div.block 容器，.list-title h4 a 标题，div.related-info 日期
@@ -780,8 +780,8 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
                  if date_m2:
                      publish_date = date_m2.group(1)
 
-        # 当前月份前缀（北京时间）
-        current_month = now_cn().strftime("%Y.%m")
+        # 目标月份前缀（默认当月，可用 --month 指定历史月份做回填）
+        current_month = month_prefix
 
         # “本月”判定：优先看施行日期（若已到 CI 当月生效），否则看公布日期。
         # 但写入 Record 的 publish_date 严格来自“公布”匹配，effective_date 独立保留，
@@ -813,6 +813,7 @@ async def click_load_more_until_done(
     seen_title_keys: set,
     category: str,
     max_items: int,
+    month_prefix: str,
     max_click_rounds: int = 20,
 ) -> List[Record]:
     """连续点击列表页的“更多”按钮，直到没有新增或触及安全上限。
@@ -823,7 +824,7 @@ async def click_load_more_until_done(
     results: List[Record] = []
 
     async def collect_once() -> int:
-        recs = await extract_visible_records(page, category)
+        recs = await extract_visible_records(page, category, month_prefix)
         added = 0
         for r in recs:
             key = title_dedup_key(r.title)
@@ -1018,6 +1019,7 @@ async def run(
     max_items: int,
     user_data_dir: Optional[Path],
     filter_keywords: Optional[List[str]] = None,
+    month: Optional[str] = None,
 ) -> List[Record]:
     async with async_playwright() as p:
         context, browser = await new_stealth_context(
@@ -1031,8 +1033,8 @@ async def run(
             # 加载已有数据，用于跳过已抓取详情的记录
             existing_data = load_existing_records(out_csv)
 
-            # 使用当月作为Python端过滤
-            current_month_prefix = now_cn().strftime("%Y.%m")
+            # 使用当月作为Python端过滤；--month 可指定历史月份用于回填
+            current_month_prefix = month or now_cn().strftime("%Y.%m")
             print(f"目标月份: {current_month_prefix}")
 
             # 定义分类及其标签以匹配标签页
@@ -1077,7 +1079,10 @@ async def run(
                 items_needed = max_items if max_items > 0 else 100
                 all_seen_titles = set(title_dedup_key(r.title) for r in all_records if title_dedup_key(r.title))
 
-                found_recs = await click_load_more_until_done(page, all_seen_titles, cat_label, max_items=items_needed)
+                found_recs = await click_load_more_until_done(
+                    page, all_seen_titles, cat_label,
+                    max_items=items_needed, month_prefix=current_month_prefix,
+                )
 
                 all_records.extend(found_recs)
                 print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
@@ -1093,7 +1098,8 @@ async def run(
 
                     all_seen_titles = set(title_dedup_key(r.title) for r in all_records if title_dedup_key(r.title))
                     sub_recs = await click_load_more_until_done(
-                        page, all_seen_titles, sub_label, max_items=items_needed
+                        page, all_seen_titles, sub_label,
+                        max_items=items_needed, month_prefix=current_month_prefix,
                     )
                     all_records.extend(sub_recs)
                     print(f"为 {sub_label} 找到 {len(sub_recs)} 条记录")
@@ -1132,6 +1138,12 @@ def parse_args() -> argparse.Namespace:
         help="标题二次过滤关键词，逗号分隔（默认使用 --keyword 的值）",
     )
 
+    ap.add_argument(
+        "--month",
+        default=None,
+        help="抓取指定月份（格式 YYYY.MM，如 2026.06），用于回填历史遗漏；默认当月",
+    )
+
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--headless", action="store_true", help="无头模式（默认）")
     g.add_argument("--headed", action="store_true", help="有头模式")
@@ -1163,6 +1175,12 @@ def main() -> None:
         else None
     )
 
+    month = None
+    if args.month:
+        if not re.fullmatch(r"\d{4}\.\d{2}", args.month):
+            raise SystemExit(f"--month 格式应为 YYYY.MM，收到: {args.month!r}")
+        month = args.month
+
     if args.enrich_existing:
         records = asyncio.run(
             run_enrich_existing(
@@ -1186,6 +1204,7 @@ def main() -> None:
             max_items=args.max_items,
             user_data_dir=user_data_dir,
             filter_keywords=filter_keywords,
+            month=month,
         )
     )
 
