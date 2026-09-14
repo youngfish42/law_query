@@ -546,6 +546,20 @@ async def search_by_title(page: Page, keyword: str) -> bool:
         traceback.print_exc()
         return False
 
+async def _page_hit_waf(page: Page) -> bool:
+    """页面正文是否为 WAF「访问安全验证」拦截页。"""
+    try:
+        text = await page.evaluate(
+            "() => document.body ? document.body.innerText : ''"
+        )
+        return "安全验证" in text or "访问频率" in text
+    except Exception:
+        return False
+
+
+# 详情页命中 WAF 拦截后的重试：等待并刷新一次，仍被拦则放弃（留待下次运行补全）。
+_WAF_RETRY_WAIT_MS = 15000
+
 async def fetch_detail_info(page: Page, url: str) -> dict:
     """访问法规详情页，获取制定机关和效力位阶。
 
@@ -556,6 +570,17 @@ async def fetch_detail_info(page: Page, url: str) -> dict:
     is_news = "/news/" in url
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+        # 详情页在高频访问时也会单独被 WAF 挑战（HTTP 200 + 验证页正文），
+        # 识别后等待重试一次，避免把空字段误当作“该页面无此信息”。
+        if await _page_hit_waf(page):
+            print(f"WARNING: 详情页命中 WAF 拦截，等待重试: {url}")
+            await page.wait_for_timeout(_WAF_RETRY_WAIT_MS)
+            await page.reload(wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(2000)
+            if await _page_hit_waf(page):
+                print(f"WARNING: 详情页重试后仍被 WAF 拦截，跳过: {url}")
+                return result
 
         # Wait until the expected metadata labels appear in the page body,
         # rather than sleeping for a fixed duration.
