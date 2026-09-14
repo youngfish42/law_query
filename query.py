@@ -23,6 +23,21 @@ def now_cn() -> datetime:
 BASE_URL = "https://www.pkulaw.com"
 # Pause (ms) between detail-page requests to avoid overloading the server
 DETAIL_PAGE_DELAY_MS = 1000
+
+# 反 WAF 人机验证（“访问安全验证”拦截页）所需的浏览器参数。
+# 站点对 headless Chromium 指纹（navigator.webdriver 等）返回 567 拦截页，
+# 此处统一覆盖为普通桌面 Chrome 的特征。不含第三方依赖。
+_STEALTH_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+_STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+window.chrome = {runtime: {}};
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
+"""
+_STEALTH_LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled"]
 # Maximum number of children an element may have and still be considered
 # a "leaf-ish" label node during DOM traversal for metadata extraction.
 # Elements with more children are likely containers, not individual labels.
@@ -275,13 +290,78 @@ def infer_authority_for_news(record: Record) -> str:
     return ""
 
 
+async def new_stealth_context(
+    p,
+    headless: bool,
+    slow_mo: int,
+    user_data_dir: Optional[Path] = None,
+):
+    """创建带反 WAF 特征的浏览器 context（站点会拦截裸 headless Chromium）。
+
+    返回 (context, browser)；browser 可能为 None（持久化 context 模式），
+    关闭时统一调用 close_browser_context(context, browser)。"""
+    launch_kwargs = {
+        "headless": headless,
+        "slow_mo": slow_mo,
+        "args": _STEALTH_LAUNCH_ARGS,
+    }
+    if user_data_dir:
+        context = await p.chromium.launch_persistent_context(
+            str(user_data_dir), **launch_kwargs
+        )
+        browser = None
+    else:
+        browser = await p.chromium.launch(**launch_kwargs)
+        context = await browser.new_context(
+            user_agent=_STEALTH_USER_AGENT,
+            viewport={"width": 1440, "height": 900},
+            locale="zh-CN",
+            timezone_id="Asia/Shanghai",
+        )
+    await context.add_init_script(_STEALTH_INIT_SCRIPT)
+    return context, browser
+
+
+async def close_browser_context(context, browser) -> None:
+    await context.close()
+    if browser:
+        await browser.close()
+
+
+async def _is_waf_blocked(page: Page) -> bool:
+    """检测是否命中 WAF 人机验证页（HTTP 567“访问安全验证”拦截）。"""
+    try:
+        if await page.locator("input#txtSearch").count() > 0:
+            return False
+        text = await page.evaluate(
+            "() => document.body ? document.body.innerText : ''"
+        )
+        return "安全验证" in text or "访问频率" in text
+    except Exception:
+        return False
+
+
 async def goto_home(page: Page) -> None:
+    resp = None
     try:
         # 增加超时时间到 60 秒
-        await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=60000)
+        resp = await page.goto(
+            BASE_URL + "/", wait_until="domcontentloaded", timeout=60000
+        )
     except Exception as e:
         print(f"Warning: 第一次尝试打开主页失败: {e}. 重试中...")
-        await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=60000)
+        resp = await page.goto(
+            BASE_URL + "/", wait_until="domcontentloaded", timeout=60000
+        )
+    status = resp.status if resp else None
+    if status and not (200 <= status < 300):
+        raise RuntimeError(
+            f"主页返回异常状态码 {status}（疑似 WAF 拦截），终止本次抓取。"
+        )
+    if await _is_waf_blocked(page):
+        raise RuntimeError(
+            "主页被 WAF 人机验证拦截（“访问安全验证”页），终止本次抓取。"
+        )
 
 
 async def click_category_nav(page: Page, label: str) -> bool:
@@ -466,6 +546,20 @@ async def search_by_title(page: Page, keyword: str) -> bool:
         traceback.print_exc()
         return False
 
+async def _page_hit_waf(page: Page) -> bool:
+    """页面正文是否为 WAF「访问安全验证」拦截页。"""
+    try:
+        text = await page.evaluate(
+            "() => document.body ? document.body.innerText : ''"
+        )
+        return "安全验证" in text or "访问频率" in text
+    except Exception:
+        return False
+
+
+# 详情页命中 WAF 拦截后的重试：等待并刷新一次，仍被拦则放弃（留待下次运行补全）。
+_WAF_RETRY_WAIT_MS = 15000
+
 async def fetch_detail_info(page: Page, url: str) -> dict:
     """访问法规详情页，获取制定机关和效力位阶。
 
@@ -476,6 +570,17 @@ async def fetch_detail_info(page: Page, url: str) -> dict:
     is_news = "/news/" in url
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+        # 详情页在高频访问时也会单独被 WAF 挑战（HTTP 200 + 验证页正文），
+        # 识别后等待重试一次，避免把空字段误当作“该页面无此信息”。
+        if await _page_hit_waf(page):
+            print(f"WARNING: 详情页命中 WAF 拦截，等待重试: {url}")
+            await page.wait_for_timeout(_WAF_RETRY_WAIT_MS)
+            await page.reload(wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(2000)
+            if await _page_hit_waf(page):
+                print(f"WARNING: 详情页重试后仍被 WAF 拦截，跳过: {url}")
+                return result
 
         # Wait until the expected metadata labels appear in the page body,
         # rather than sleeping for a fixed duration.
@@ -624,7 +729,7 @@ async def enrich_records_with_details(
         await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
 
 
-async def extract_visible_records(page: Page, category: str) -> List[Record]:
+async def extract_visible_records(page: Page, category: str, month_prefix: str) -> List[Record]:
     # pkulaw.com 使用两种不同的搜索结果布局：
     # - 中央法规/地方法规: div.col 容器，.t h4 a 标题，div.info 日期
     # - 立法资料/法律动态: div.block 容器，.list-title h4 a 标题，div.related-info 日期
@@ -700,8 +805,8 @@ async def extract_visible_records(page: Page, category: str) -> List[Record]:
                  if date_m2:
                      publish_date = date_m2.group(1)
 
-        # 当前月份前缀（北京时间）
-        current_month = now_cn().strftime("%Y.%m")
+        # 目标月份前缀（默认当月，可用 --month 指定历史月份做回填）
+        current_month = month_prefix
 
         # “本月”判定：优先看施行日期（若已到 CI 当月生效），否则看公布日期。
         # 但写入 Record 的 publish_date 严格来自“公布”匹配，effective_date 独立保留，
@@ -733,6 +838,7 @@ async def click_load_more_until_done(
     seen_title_keys: set,
     category: str,
     max_items: int,
+    month_prefix: str,
     max_click_rounds: int = 20,
 ) -> List[Record]:
     """连续点击列表页的“更多”按钮，直到没有新增或触及安全上限。
@@ -743,7 +849,7 @@ async def click_load_more_until_done(
     results: List[Record] = []
 
     async def collect_once() -> int:
-        recs = await extract_visible_records(page, category)
+        recs = await extract_visible_records(page, category, month_prefix)
         added = 0
         for r in recs:
             key = title_dedup_key(r.title)
@@ -908,21 +1014,10 @@ async def run_enrich_existing(
     print(f"共 {len(existing)} 条现有记录，其中 {len(to_enrich)} 条需要补全详情信息。")
 
     async with async_playwright() as p:
-        launch_kwargs: dict = {
-            "headless": headless,
-            "slow_mo": slow_mo,
-        }
-
-        browser = None
-        if user_data_dir:
-            context = await p.chromium.launch_persistent_context(
-                str(user_data_dir), **launch_kwargs
-            )
-            page = await context.new_page()
-        else:
-            browser = await p.chromium.launch(**launch_kwargs)
-            context = await browser.new_context()
-            page = await context.new_page()
+        context, browser = await new_stealth_context(
+            p, headless=headless, slow_mo=slow_mo, user_data_dir=user_data_dir
+        )
+        page = await context.new_page()
 
         try:
             for r in to_enrich:
@@ -932,9 +1027,7 @@ async def run_enrich_existing(
                 r.legal_hierarchy = r.legal_hierarchy or detail.get("legal_hierarchy", "")
                 await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
         finally:
-            await context.close()
-            if browser:
-                await browser.close()
+            await close_browser_context(context, browser)
 
     all_records = list(existing.values())
     write_csv(out_csv, all_records)
@@ -951,23 +1044,13 @@ async def run(
     max_items: int,
     user_data_dir: Optional[Path],
     filter_keywords: Optional[List[str]] = None,
+    month: Optional[str] = None,
 ) -> List[Record]:
     async with async_playwright() as p:
-        launch_kwargs = {
-            "headless": headless,
-            "slow_mo": slow_mo,
-        }
-
-        if user_data_dir:
-            context = await p.chromium.launch_persistent_context(
-                user_data_dir=str(user_data_dir),
-                **launch_kwargs,
-            )
-            page = await context.new_page()
-        else:
-            browser = await p.chromium.launch(**launch_kwargs)
-            context = await browser.new_context()
-            page = await context.new_page()
+        context, browser = await new_stealth_context(
+            p, headless=headless, slow_mo=slow_mo, user_data_dir=user_data_dir
+        )
+        page = await context.new_page()
 
         try:
             all_records: List[Record] = []
@@ -975,8 +1058,8 @@ async def run(
             # 加载已有数据，用于跳过已抓取详情的记录
             existing_data = load_existing_records(out_csv)
 
-            # 使用当月作为Python端过滤
-            current_month_prefix = now_cn().strftime("%Y.%m")
+            # 使用当月作为Python端过滤；--month 可指定历史月份用于回填
+            current_month_prefix = month or now_cn().strftime("%Y.%m")
             print(f"目标月份: {current_month_prefix}")
 
             # 定义分类及其标签以匹配标签页
@@ -1021,7 +1104,10 @@ async def run(
                 items_needed = max_items if max_items > 0 else 100
                 all_seen_titles = set(title_dedup_key(r.title) for r in all_records if title_dedup_key(r.title))
 
-                found_recs = await click_load_more_until_done(page, all_seen_titles, cat_label, max_items=items_needed)
+                found_recs = await click_load_more_until_done(
+                    page, all_seen_titles, cat_label,
+                    max_items=items_needed, month_prefix=current_month_prefix,
+                )
 
                 all_records.extend(found_recs)
                 print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
@@ -1037,7 +1123,8 @@ async def run(
 
                     all_seen_titles = set(title_dedup_key(r.title) for r in all_records if title_dedup_key(r.title))
                     sub_recs = await click_load_more_until_done(
-                        page, all_seen_titles, sub_label, max_items=items_needed
+                        page, all_seen_titles, sub_label,
+                        max_items=items_needed, month_prefix=current_month_prefix,
                     )
                     all_records.extend(sub_recs)
                     print(f"为 {sub_label} 找到 {len(sub_recs)} 条记录")
@@ -1062,7 +1149,7 @@ async def run(
 
             return all_records
         finally:
-            await context.close()
+            await close_browser_context(context, browser)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1074,6 +1161,12 @@ def parse_args() -> argparse.Namespace:
         "--filter-keywords",
         default=None,
         help="标题二次过滤关键词，逗号分隔（默认使用 --keyword 的值）",
+    )
+
+    ap.add_argument(
+        "--month",
+        default=None,
+        help="抓取指定月份（格式 YYYY.MM，如 2026.06），用于回填历史遗漏；默认当月",
     )
 
     g = ap.add_mutually_exclusive_group()
@@ -1107,6 +1200,12 @@ def main() -> None:
         else None
     )
 
+    month = None
+    if args.month:
+        if not re.fullmatch(r"\d{4}\.\d{2}", args.month):
+            raise SystemExit(f"--month 格式应为 YYYY.MM，收到: {args.month!r}")
+        month = args.month
+
     if args.enrich_existing:
         records = asyncio.run(
             run_enrich_existing(
@@ -1130,6 +1229,7 @@ def main() -> None:
             max_items=args.max_items,
             user_data_dir=user_data_dir,
             filter_keywords=filter_keywords,
+            month=month,
         )
     )
 
