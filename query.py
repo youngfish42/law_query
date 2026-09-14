@@ -23,6 +23,21 @@ def now_cn() -> datetime:
 BASE_URL = "https://www.pkulaw.com"
 # Pause (ms) between detail-page requests to avoid overloading the server
 DETAIL_PAGE_DELAY_MS = 1000
+
+# 反 WAF 人机验证（“访问安全验证”拦截页）所需的浏览器参数。
+# 站点对 headless Chromium 指纹（navigator.webdriver 等）返回 567 拦截页，
+# 此处统一覆盖为普通桌面 Chrome 的特征。不含第三方依赖。
+_STEALTH_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+_STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+window.chrome = {runtime: {}};
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
+"""
+_STEALTH_LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled"]
 # Maximum number of children an element may have and still be considered
 # a "leaf-ish" label node during DOM traversal for metadata extraction.
 # Elements with more children are likely containers, not individual labels.
@@ -275,13 +290,78 @@ def infer_authority_for_news(record: Record) -> str:
     return ""
 
 
+async def new_stealth_context(
+    p,
+    headless: bool,
+    slow_mo: int,
+    user_data_dir: Optional[Path] = None,
+):
+    """创建带反 WAF 特征的浏览器 context（站点会拦截裸 headless Chromium）。
+
+    返回 (context, browser)；browser 可能为 None（持久化 context 模式），
+    关闭时统一调用 close_browser_context(context, browser)。"""
+    launch_kwargs = {
+        "headless": headless,
+        "slow_mo": slow_mo,
+        "args": _STEALTH_LAUNCH_ARGS,
+    }
+    if user_data_dir:
+        context = await p.chromium.launch_persistent_context(
+            str(user_data_dir), **launch_kwargs
+        )
+        browser = None
+    else:
+        browser = await p.chromium.launch(**launch_kwargs)
+        context = await browser.new_context(
+            user_agent=_STEALTH_USER_AGENT,
+            viewport={"width": 1440, "height": 900},
+            locale="zh-CN",
+            timezone_id="Asia/Shanghai",
+        )
+    await context.add_init_script(_STEALTH_INIT_SCRIPT)
+    return context, browser
+
+
+async def close_browser_context(context, browser) -> None:
+    await context.close()
+    if browser:
+        await browser.close()
+
+
+async def _is_waf_blocked(page: Page) -> bool:
+    """检测是否命中 WAF 人机验证页（HTTP 567“访问安全验证”拦截）。"""
+    try:
+        if await page.locator("input#txtSearch").count() > 0:
+            return False
+        text = await page.evaluate(
+            "() => document.body ? document.body.innerText : ''"
+        )
+        return "安全验证" in text or "访问频率" in text
+    except Exception:
+        return False
+
+
 async def goto_home(page: Page) -> None:
+    resp = None
     try:
         # 增加超时时间到 60 秒
-        await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=60000)
+        resp = await page.goto(
+            BASE_URL + "/", wait_until="domcontentloaded", timeout=60000
+        )
     except Exception as e:
         print(f"Warning: 第一次尝试打开主页失败: {e}. 重试中...")
-        await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=60000)
+        resp = await page.goto(
+            BASE_URL + "/", wait_until="domcontentloaded", timeout=60000
+        )
+    status = resp.status if resp else None
+    if status and not (200 <= status < 300):
+        raise RuntimeError(
+            f"主页返回异常状态码 {status}（疑似 WAF 拦截），终止本次抓取。"
+        )
+    if await _is_waf_blocked(page):
+        raise RuntimeError(
+            "主页被 WAF 人机验证拦截（“访问安全验证”页），终止本次抓取。"
+        )
 
 
 async def click_category_nav(page: Page, label: str) -> bool:
@@ -908,21 +988,10 @@ async def run_enrich_existing(
     print(f"共 {len(existing)} 条现有记录，其中 {len(to_enrich)} 条需要补全详情信息。")
 
     async with async_playwright() as p:
-        launch_kwargs: dict = {
-            "headless": headless,
-            "slow_mo": slow_mo,
-        }
-
-        browser = None
-        if user_data_dir:
-            context = await p.chromium.launch_persistent_context(
-                str(user_data_dir), **launch_kwargs
-            )
-            page = await context.new_page()
-        else:
-            browser = await p.chromium.launch(**launch_kwargs)
-            context = await browser.new_context()
-            page = await context.new_page()
+        context, browser = await new_stealth_context(
+            p, headless=headless, slow_mo=slow_mo, user_data_dir=user_data_dir
+        )
+        page = await context.new_page()
 
         try:
             for r in to_enrich:
@@ -932,9 +1001,7 @@ async def run_enrich_existing(
                 r.legal_hierarchy = r.legal_hierarchy or detail.get("legal_hierarchy", "")
                 await page.wait_for_timeout(DETAIL_PAGE_DELAY_MS)
         finally:
-            await context.close()
-            if browser:
-                await browser.close()
+            await close_browser_context(context, browser)
 
     all_records = list(existing.values())
     write_csv(out_csv, all_records)
@@ -953,21 +1020,10 @@ async def run(
     filter_keywords: Optional[List[str]] = None,
 ) -> List[Record]:
     async with async_playwright() as p:
-        launch_kwargs = {
-            "headless": headless,
-            "slow_mo": slow_mo,
-        }
-
-        if user_data_dir:
-            context = await p.chromium.launch_persistent_context(
-                user_data_dir=str(user_data_dir),
-                **launch_kwargs,
-            )
-            page = await context.new_page()
-        else:
-            browser = await p.chromium.launch(**launch_kwargs)
-            context = await browser.new_context()
-            page = await context.new_page()
+        context, browser = await new_stealth_context(
+            p, headless=headless, slow_mo=slow_mo, user_data_dir=user_data_dir
+        )
+        page = await context.new_page()
 
         try:
             all_records: List[Record] = []
@@ -1062,7 +1118,7 @@ async def run(
 
             return all_records
         finally:
-            await context.close()
+            await close_browser_context(context, browser)
 
 
 def parse_args() -> argparse.Namespace:
