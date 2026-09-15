@@ -1004,6 +1004,23 @@ def _month_implement_range(month_prefix: str) -> tuple:
     return f"{year}.{month}.1", f"{year}.{month}.{last_day}"
 
 
+def _recent_windows(today: datetime, days: int) -> List[tuple]:
+    """把“最近 N 天 ~ 当月月末”的检索范围拆为按月分段 (month_prefix, day_start, day_end)。
+
+    向后延伸至当月月末可提前捕获已公布但尚未施行的条目；
+    月初向前跨入上月时产生两段，保证上月末新发布的条目不被漏掉。"""
+    start = today - timedelta(days=days - 1)
+    same_month = (start.year, start.month) == (today.year, today.month)
+    segments: List[tuple] = []
+    if not same_month:
+        prev_last_day = calendar.monthrange(start.year, start.month)[1]
+        segments.append((f"{start.year}.{start.month:02d}", start.day, prev_last_day))
+    cur_last_day = calendar.monthrange(today.year, today.month)[1]
+    cur_start = start.day if same_month else 1
+    segments.append((f"{today.year}.{today.month:02d}", cur_start, cur_last_day))
+    return segments
+
+
 def _mcp_handshake(token: str) -> None:
     """完成 MCP 会话初始化（该服务端无会话状态，每次进程初始化一次即可）。"""
     _mcp_rpc(token, "initialize", {
@@ -1063,8 +1080,10 @@ def _mcp_search_month(
     month_prefix: str,
     field: str,
     max_calls: int = MCP_MAX_WINDOW_CALLS,
+    day_start: int = 1,
+    day_end: Optional[int] = None,
 ) -> tuple:
-    """对目标月份做自适应日期窗拆分检索，规避服务端 20 条上限。
+    """对目标月份（可限定日区间）做自适应日期窗拆分检索，规避服务端 20 条上限。
 
     从整月窗口开始，凡命中 20 条上限（结果可能被截断）的窗口二分拆分后重查，
     最小粒度为天（单日超过 20 条时接受截断）。调用间隔 MCP_CALL_DELAY_S。
@@ -1072,10 +1091,12 @@ def _mcp_search_month(
     返回 (原始条目列表, 实际调用次数, 是否因 max_calls 截断而未查完)。"""
     year, month = (int(part) for part in month_prefix.split("."))
     last_day = calendar.monthrange(year, month)[1]
+    if day_end is None or day_end > last_day:
+        day_end = last_day
 
     items: List[dict] = []
     calls = 0
-    windows = [(1, last_day)]
+    windows = [(day_start, day_end)]
     truncated = False
     while windows:
         if calls >= max_calls:
@@ -1140,8 +1161,12 @@ def _record_from_mcp_item(item: dict) -> Optional[Record]:
     )
 
 
-def _records_from_mcp_items(items: List[dict], month_prefix: str) -> List[Record]:
-    """把 MCP 原始条目映射为 Record 并按目标月份过滤（优先施行日期，否则公布日期）。"""
+def _records_from_mcp_items(items: List[dict], month_prefixes) -> List[Record]:
+    """把 MCP 原始条目映射为 Record 并按目标月份过滤（优先施行日期，否则公布日期）。
+
+    month_prefixes 为可接受的 'YYYY.MM' 集合（增量扫描跨月时含上月与当月）。"""
+    if isinstance(month_prefixes, str):
+        month_prefixes = (month_prefixes,)
     records: List[Record] = []
     for item in items:
         rec = _record_from_mcp_item(item)
@@ -1149,8 +1174,8 @@ def _records_from_mcp_items(items: List[dict], month_prefix: str) -> List[Record
             continue
         # 与浏览器路径一致的“本月”判定：优先施行日期，否则公布日期
         date_to_check = rec.effective_date or rec.publish_date
-        if not date_to_check.startswith(month_prefix):
-            print(f"DEBUG: 跳过记录 '{rec.title[:40]}' - 日期 {date_to_check} 不在 {month_prefix} 中")
+        if not any(date_to_check.startswith(p) for p in month_prefixes):
+            print(f"DEBUG: 跳过记录 '{rec.title[:40]}' - 日期 {date_to_check} 不在 {month_prefixes} 中")
             continue
         records.append(rec)
     return records
@@ -1164,11 +1189,14 @@ def run_mcp(
     filter_keywords: Optional[List[str]] = None,
     month: Optional[str] = None,
     fulltext: bool = False,
+    days: Optional[int] = None,
 ) -> List[Record]:
     """通过北大法宝 MCP 服务检索法规并写入 CSV（独立于浏览器抓取路径）。
 
     默认仅按标题（title）检索；传入 --fulltext 时追加正文（fulltext）检索，
-    均由 _mcp_search_month 按目标月份做自适应日期窗拆分，规避服务端 20 条上限。"""
+    均由 _mcp_search_month 做自适应日期窗拆分，规避服务端 20 条上限。
+    days（--days）启用增量模式：仅检索最近 N 天（月初自动跨入上月尾部），
+    供每日任务节省积分；指定 --month 时忽略 days，始终整月检索。"""
     token = os.environ.get(MCP_TOKEN_ENV, "").strip()
     if not token:
         raise SystemExit(
@@ -1177,18 +1205,30 @@ def run_mcp(
         )
 
     current_month_prefix = month or now_cn().strftime("%Y.%m")
-    print(f"目标月份: {current_month_prefix}")
+    if days and not month:
+        segments = _recent_windows(now_cn(), days)
+        print(f"目标月份: {current_month_prefix}（增量模式：最近 {days} 天，分段 {segments}）")
+    else:
+        segments = [(current_month_prefix, 1, None)]
+        print(f"目标月份: {current_month_prefix}")
     print(f"正在通过 MCP 检索关键词: {keyword}（标题{' + 正文' if fulltext else ''}）")
 
     _mcp_handshake(token)
-    title_items = _mcp_search_month(token, keyword, current_month_prefix, "title")[0]
-    fulltext_items = (
-        _mcp_search_month(token, keyword, current_month_prefix, "fulltext")[0]
-        if fulltext
-        else []
-    )
+    title_items: List[dict] = []
+    fulltext_items: List[dict] = []
+    for prefix, day_start, day_end in segments:
+        items, _, _ = _mcp_search_month(
+            token, keyword, prefix, "title", day_start=day_start, day_end=day_end,
+        )
+        title_items.extend(items)
+        if fulltext:
+            items, _, _ = _mcp_search_month(
+                token, keyword, prefix, "fulltext", day_start=day_start, day_end=day_end,
+            )
+            fulltext_items.extend(items)
 
-    all_records = _records_from_mcp_items(title_items + fulltext_items, current_month_prefix)
+    month_prefixes = tuple(s[0] for s in segments)
+    all_records = _records_from_mcp_items(title_items + fulltext_items, month_prefixes)
     all_records = deduplicate_records_by_title(all_records)
 
     # 标题二次过滤只约束「标题检索」来源的记录；
@@ -1665,6 +1705,13 @@ def parse_args() -> argparse.Namespace:
         default=10000,
         help=f"--backfill 的积分预算（每次检索调用约 {MCP_POINTS_PER_CALL} 积分），默认 10000",
     )
+    ap.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="仅 --source mcp 有效：仅检索最近 N 天（按施行日期，向后覆盖至当月月末，"
+        "月初自动跨入上月尾部），用于每日增量扫描以节省积分；默认整月",
+    )
 
     return ap.parse_args()
 
@@ -1730,6 +1777,7 @@ def main() -> None:
             filter_keywords=filter_keywords,
             month=month,
             fulltext=args.fulltext,
+            days=args.days,
         )
     else:
         records = asyncio.run(

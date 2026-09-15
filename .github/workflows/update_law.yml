@@ -69,13 +69,21 @@ jobs:
             SOURCE="${{ inputs.source || 'mcp' }}"
             echo "Source: $SOURCE"
 
+            # 积分节省策略：每日仅增量扫最近 5 天（约 10 次调用 ≈ 250 积分）；
+            # 每周一全月复核，捕捉延迟入库/回溯添加的条目
+            DAYS_FLAG="--days 5"
+            if [ "$(date +%u)" = "1" ]; then
+              DAYS_FLAG=""
+              echo "周一：全月复核（不使用增量窗口）"
+            fi
+
             for KW in "${KEYWORDS[@]}"; do
               echo "=========================================="
               echo "正在查询关键词: $KW"
               echo "=========================================="
               if [ "$SOURCE" = "mcp" ]; then
                 # MCP 优先：失败（无 token / 网络 / 服务端错误）时回退浏览器抓取
-                if ! python query.py --source mcp --keyword "$KW" --out "法规_mcp.csv"; then
+                if ! python query.py --source mcp --keyword "$KW" --out "法规_mcp.csv" $DAYS_FLAG; then
                   echo "WARNING: MCP 抓取失败，回退浏览器抓取: $KW"
                   python query.py --keyword "$KW" --out "法规.csv"
                 fi

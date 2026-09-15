@@ -76,6 +76,9 @@ python query.py --source mcp --keyword 智能 --out "法规_mcp.csv"
 # MCP 抓取并追加正文检索（覆盖面更广，但正文顺带提及的条目会带来噪声）
 python query.py --source mcp --keyword 智能 --fulltext --out "法规_mcp.csv"
 
+# MCP 每日增量扫描（仅最近 5 天，节省积分；指定 --month 时忽略 --days）
+python query.py --source mcp --keyword 智能 --days 5 --out "法规_mcp.csv"
+
 # MCP 历史回填：按积分预算补抓 start-month 至上月（断点续扫，进度见 mcp_backfill_state.json）
 python query.py --source mcp --backfill --start-month 2025.01 --points-budget 10000 --keyword "智能,算力" --out "法规_mcp.csv"
 
@@ -120,6 +123,7 @@ CI 默认依次抓取的关键词列表（位于 workflow 中）：
 
 - Workflow 触发：每天 UTC 22:30（北京时间次日 06:30）；也可在 Actions 页手动 `workflow_dispatch`，支持 `keyword`、`source`（mcp/browser）与 `enrich_existing` 输入。
 - 定时任务 **MCP 优先**：每个关键词先走 MCP 服务（写 `法规_mcp.csv`），失败时回退浏览器抓取（写 `法规.csv`）；授权码取自仓库 Secret `PKULAW_MCP_TOKEN`（未配置时自动整体回退浏览器途径）。
+- 积分节省策略：每日任务默认 `--days 5` 增量扫描（仅最近 5 天，月初自动跨入上月尾部），每周一改为整月复核以捕捉延迟入库的条目。
 - Workflow 会 `git add 法规.csv 法规_mcp.csv meta.json feed.xml` 并自动 commit & push，**请不要**让脚本写入其他需要提交的文件，除非同步更新 workflow。
 - 修改 workflow 里的自动提交步骤时，注意保留其中已配置的 `git config user.email / user.name`，不要随意替换 bot 身份。
 - `backfill_mcp.yml` 为**仅手动触发**的 MCP 历史回填 Action：用户在签到领取积分（约 10000 分/日）后触发，按 `points_budget`（默认 10000，约 25 积分/次调用 ≈ 400 次）回填 `start_month` 至上月的数据；进度记录在 `mcp_backfill_state.json`（随仓库提交），重复触发自动跳过已完成组合、从断点续扫；当月数据由每日定时任务覆盖，不在回填范围内。
