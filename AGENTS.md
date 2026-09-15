@@ -22,10 +22,13 @@
 ```
 law_scraper/
 ├── .github/workflows/update_law.yml  # 每日定时抓取并提交
+├── .github/workflows/backfill_mcp.yml # 手动触发的 MCP 历史回填（积分预算制）
 ├── query.py                          # 主抓取脚本（Playwright）
 ├── generate_rss.py                   # 根据 CSV 生成 feed.xml
 ├── index.html                        # GitHub Pages 静态展示页
 ├── 法规.csv                          # 抓取结果（持久化数据，按标题去重）
+├── 法规_mcp.csv                      # MCP 途径抓取结果（独立文件，列契约同 法规.csv）
+├── mcp_backfill_state.json           # MCP 回填进度（已完成的 月份|关键词 组合）
 ├── feed.xml                          # 生成的 RSS 2.0
 ├── meta.json                         # 最近更新时间（北京时间）
 ├── requirements.txt
@@ -47,6 +50,15 @@ law_scraper/
 
 `meta.json` 形如 `{"updated_at": "2026-06-12 08:00"}`（北京时间）。
 
+`法规_mcp.csv` 与 `法规.csv` 列定义完全一致（另含 `effective_date` 列，同上表口径）；
+MCP 服务仅覆盖中央 / 地方法规库，单次检索上限 20 条且不支持翻页，
+其 `category` 由 URL 路径段（chl/lar）经 `enforce_category_by_url()` 推断。
+MCP 检索按目标月份的施行日期范围（`startImplementDate/endImplementDate`）+
+时效性过滤（现行有效 / 尚未施行）构造参数，以规避 20 条上限下相关度排序
+把当月新法规挤出结果集的问题。默认仅按标题检索，`--fulltext` 可追加正文
+（fulltext）检索；`_mcp_search_month()` 对命中 20 条上限的日期窗二分拆分
+（最小粒度为天）以突破上限；正文命中的记录不做标题二次过滤，噪声较多，故默认关闭。
+
 ## 5. 常用命令
 
 ```bash
@@ -56,6 +68,19 @@ playwright install chromium
 
 # 抓取单个关键词
 python query.py --keyword 智能 --out 法规.csv
+
+# 通过北大法宝 MCP 服务抓取（需先设置授权码环境变量；结果写入独立文件）
+export PKULAW_MCP_TOKEN=<token>   # Windows cmd: set PKULAW_MCP_TOKEN=<token>
+python query.py --source mcp --keyword 智能 --out "法规_mcp.csv"
+
+# MCP 抓取并追加正文检索（覆盖面更广，但正文顺带提及的条目会带来噪声）
+python query.py --source mcp --keyword 智能 --fulltext --out "法规_mcp.csv"
+
+# MCP 每日增量扫描（仅最近 5 天，节省积分；指定 --month 时忽略 --days）
+python query.py --source mcp --keyword 智能 --days 5 --out "法规_mcp.csv"
+
+# MCP 历史回填：优先补当月缺漏，再倒序补 start-month 起的历史月份（只扫未覆盖的日期窗口）
+python query.py --source mcp --backfill --start-month 2025.01 --keyword "智能,算力" --out "法规_mcp.csv"
 
 # 抓取并输出 JSON
 python query.py --keyword 智能 --out 法规.csv --out-json results.json
@@ -96,9 +121,14 @@ CI 默认依次抓取的关键词列表（位于 workflow 中）：
 
 ## 8. CI / 自动化注意事项
 
-- Workflow 触发：每天 UTC 22:30（北京时间次日 06:30）；也可在 Actions 页手动 `workflow_dispatch`，支持 `keyword` 与 `enrich_existing` 输入。
-- Workflow 会 `git add 法规.csv meta.json feed.xml` 并自动 commit & push，**请不要**让脚本写入其他需要提交的文件，除非同步更新 workflow。
+- Workflow 触发：每天 UTC 22:30（北京时间次日 06:30）；也可在 Actions 页手动 `workflow_dispatch`，支持 `keyword`、`source`（mcp/browser）与 `enrich_existing` 输入。
+- 定时任务 **MCP 优先**：每个关键词先走 MCP 服务（写 `法规_mcp.csv`），失败时回退浏览器抓取（写 `法规.csv`）；授权码取自仓库 Secret `PKULAW_MCP_TOKEN`（未配置时自动整体回退浏览器途径）。
+- 积分节省策略：每日任务默认 `--days 5` 增量扫描（仅最近 5 天，月初自动跨入上月尾部），每周一改为整月复核以捕捉延迟入库的条目。
+- MCP 退出码约定：`0` 成功；`2` MCP 当日不可用（401/403/429 或 token 缺失，确定性错误，当日重试无意义）；`1` 瞬时故障。每日任务据此 fail-fast：命中退出码 2 时剩余关键词全部改走浏览器，不再逐个无效尝试。
+- Workflow 会 `git add 法规.csv 法规_mcp.csv mcp_backfill_state.json meta.json feed.xml` 并自动 commit & push，**请不要**让脚本写入其他需要提交的文件，除非同步更新 workflow。
 - 修改 workflow 里的自动提交步骤时，注意保留其中已配置的 `git config user.email / user.name`，不要随意替换 bot 身份。
+- `backfill_mcp.yml` 为**仅手动触发**的 MCP 历史回填 Action：用户在签到领取积分（约 10000 分/日）后触发，优先补当月缺漏、再倒序回填 `start_month` 起的历史月份；`points_budget` 默认 `0`=不限（持续到积分耗尽，进度实时保存、下次续扫）。
+- 覆盖账本 `mcp_backfill_state.json`（v2，随仓库提交）记录每个 月份×关键词 已**确定覆盖**的日区间：日期 D 被覆盖 = 存在一次在 D 当日或之后执行且窗口包含 D 的成功扫描；每次 MCP 检索（含每日任务与手动 `--month`）成功后自动入账，回填只扫未覆盖的补集窗口。
 
 ## 9. 协作准则（给 AI 的硬性约束）
 

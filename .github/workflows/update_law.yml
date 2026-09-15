@@ -9,6 +9,14 @@ on:
         description: '检索关键词（留空则依次检索所有默认关键词）'
         required: false
         default: ''
+      source:
+        description: '数据来源：mcp=北大法宝 MCP 服务（失败时回退浏览器）；browser=模拟浏览器'
+        required: false
+        default: 'mcp'
+        type: choice
+        options:
+          - mcp
+          - browser
       enrich_existing:
         description: '仅补全已有条目的制定机关/效力位阶（不执行新搜索，true/false）'
         required: false
@@ -22,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: Asia/Shanghai
+      PKULAW_MCP_TOKEN: ${{ secrets.PKULAW_MCP_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -56,11 +65,42 @@ jobs:
               KEYWORDS=("智能" "数智化" "AI" "高质量数据" "大模型" "算力" "工业互联网" "新兴产业" "未来产业" "数字化")
             fi
 
+            # 数据来源：定时触发默认 mcp（MCP 优先）；手动触发可用 source 输入覆盖
+            SOURCE="${{ inputs.source || 'mcp' }}"
+            echo "Source: $SOURCE"
+
+            # 积分节省策略：每日仅增量扫最近 5 天（约 10 次调用 ≈ 250 积分）；
+            # 每周一全月复核，捕捉延迟入库/回溯添加的条目
+            DAYS_FLAG="--days 5"
+            if [ "$(date +%u)" = "1" ]; then
+              DAYS_FLAG=""
+              echo "周一：全月复核（不使用增量窗口）"
+            fi
+
+            # MCP 当日可用性标记：命中确定性错误（退出码 2）后置 false
+            MCP_AVAILABLE=true
+
             for KW in "${KEYWORDS[@]}"; do
               echo "=========================================="
               echo "正在查询关键词: $KW"
               echo "=========================================="
-              python query.py --keyword "$KW" --out "法规.csv"
+              if [ "$SOURCE" = "mcp" ] && [ "$MCP_AVAILABLE" = "true" ]; then
+                # MCP 优先；按退出码分级处置：
+                #   2 = 积分不足/授权问题（确定性），本日剩余关键词全部改走浏览器
+                #   1 = 瞬时故障，仅本关键词回退浏览器，后续关键词仍尝试 MCP
+                rc=0
+                python query.py --source mcp --keyword "$KW" --out "法规_mcp.csv" $DAYS_FLAG || rc=$?
+                if [ $rc -eq 2 ]; then
+                  echo "::warning::MCP 当日不可用（积分不足或授权问题），剩余关键词改用浏览器抓取"
+                  MCP_AVAILABLE=false
+                  python query.py --keyword "$KW" --out "法规.csv"
+                elif [ $rc -ne 0 ]; then
+                  echo "::warning::MCP 临时故障，关键词 $KW 回退浏览器抓取"
+                  python query.py --keyword "$KW" --out "法规.csv"
+                fi
+              else
+                python query.py --keyword "$KW" --out "法规.csv"
+              fi
             done
           fi
           
@@ -78,6 +118,9 @@ jobs:
           git config --local user.email "youngfish42@users.noreply.github.com"
           git config --local user.name "youngfish42"
           git add 法规.csv meta.json feed.xml
+          # MCP 独立输出文件与覆盖账本（browser 模式或未跑 MCP 时可能不存在）
+          if [ -f "法规_mcp.csv" ]; then git add "法规_mcp.csv"; fi
+          if [ -f "mcp_backfill_state.json" ]; then git add "mcp_backfill_state.json"; fi
           
           # Check for staged changes
           if git diff --staged --quiet; then
@@ -93,5 +136,6 @@ jobs:
           name: query-results
           path: |
             法规.csv
+            法规_mcp.csv
             meta.json
             feed.xml
