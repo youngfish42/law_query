@@ -1,0 +1,75 @@
+name: Backfill Law Data via MCP
+
+on:
+  workflow_dispatch:      # 仅手动触发：领取签到积分（约 10000 分/日）后运行
+    inputs:
+      start_month:
+        description: '回填起始月份（YYYY.MM，含该月；回填至上月为止，最近月份优先）'
+        required: true
+        default: '2025.01'
+      points_budget:
+        description: '本次可用积分预算（每次检索调用约 25 积分，10000 积分 ≈ 400 次调用）'
+        required: false
+        default: '10000'
+      keyword:
+        description: '检索关键词，逗号分隔（留空则依次使用所有默认关键词）'
+        required: false
+        default: ''
+      fulltext:
+        description: '追加正文检索（覆盖面更广但噪声多、积分约翻倍，true/false）'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Shanghai
+      PKULAW_MCP_TOKEN: ${{ secrets.PKULAW_MCP_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run MCP backfill
+        run: |
+          # MCP 检索仅用标准库，无需安装 playwright
+          KEYWORD_INPUT="${{ inputs.keyword }}"
+          if [ -n "$KEYWORD_INPUT" ]; then
+            KEYWORDS="$KEYWORD_INPUT"
+          else
+            KEYWORDS="智能,数智化,AI,高质量数据,大模型,算力,工业互联网,新兴产业,未来产业,数字化"
+          fi
+
+          FULLTEXT_FLAG=""
+          if [ "${{ inputs.fulltext }}" = "true" ]; then
+            FULLTEXT_FLAG="--fulltext"
+          fi
+
+          python query.py --source mcp --backfill \
+            --start-month "${{ inputs.start_month }}" \
+            --points-budget "${{ inputs.points_budget }}" \
+            --keyword "$KEYWORDS" \
+            --out "法规_mcp.csv" $FULLTEXT_FLAG
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "youngfish42@users.noreply.github.com"
+          git config --local user.name "youngfish42"
+          if [ -f "法规_mcp.csv" ]; then git add "法规_mcp.csv"; fi
+          if [ -f "mcp_backfill_state.json" ]; then git add "mcp_backfill_state.json"; fi
+
+          # Check for staged changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Backfill law data via MCP (from ${{ inputs.start_month }})"
+            git push
+          fi
