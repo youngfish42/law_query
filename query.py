@@ -323,7 +323,8 @@ async def new_stealth_context(
 
 
 async def close_browser_context(context, browser) -> None:
-    await context.close()
+    if context:
+        await context.close()
     if browser:
         await browser.close()
 
@@ -341,27 +342,41 @@ async def _is_waf_blocked(page: Page) -> bool:
         return False
 
 
-async def goto_home(page: Page) -> None:
-    resp = None
+class WafBlockedError(RuntimeError):
+    """主页被 WAF 人机验证拦截（HTTP 567“访问安全验证”页）。"""
+
+
+async def _goto_home_once(page: Page):
     try:
         # 增加超时时间到 60 秒
-        resp = await page.goto(
+        return await page.goto(
             BASE_URL + "/", wait_until="domcontentloaded", timeout=60000
         )
     except Exception as e:
         print(f"Warning: 第一次尝试打开主页失败: {e}. 重试中...")
-        resp = await page.goto(
+        return await page.goto(
             BASE_URL + "/", wait_until="domcontentloaded", timeout=60000
         )
+
+
+async def goto_home(page: Page) -> None:
+    resp = await _goto_home_once(page)
     status = resp.status if resp else None
-    if status and not (200 <= status < 300):
-        raise RuntimeError(
-            f"主页返回异常状态码 {status}（疑似 WAF 拦截），终止本次抓取。"
-        )
-    if await _is_waf_blocked(page):
-        raise RuntimeError(
-            "主页被 WAF 人机验证拦截（“访问安全验证”页），终止本次抓取。"
-        )
+    blocked = (status and not (200 <= status < 300)) or await _is_waf_blocked(page)
+    if not blocked:
+        return
+    reason = (
+        f"主页返回异常状态码 {status}（疑似 WAF 拦截）"
+        if status and not (200 <= status < 300)
+        else "主页被 WAF 人机验证拦截（“访问安全验证”页）"
+    )
+    print(f"WARNING: {reason}，等待 {_WAF_RETRY_WAIT_MS / 1000:.0f}s 后重试...")
+    await page.wait_for_timeout(_WAF_RETRY_WAIT_MS)
+    resp = await _goto_home_once(page)
+    status = resp.status if resp else None
+    blocked = (status and not (200 <= status < 300)) or await _is_waf_blocked(page)
+    if blocked:
+        raise WafBlockedError(f"{reason}，重试后仍被拦截。")
 
 
 async def click_category_nav(page: Page, label: str) -> bool:
@@ -1074,66 +1089,80 @@ async def run(
                 ("legal_updates", "法律动态", True, []),
             ]
 
+            waf_blocked = False
             for cat_key, cat_label, nav_needed, sub_tabs in categories:
-                print(f"正在处理分类: {cat_label} ({cat_key})")
+                try:
+                    print(f"正在处理分类: {cat_label} ({cat_key})")
 
-                # 第一步: 进入首页
-                await goto_home(page)
-                # 首页加载完稍作等待
-                await page.wait_for_timeout(5000)
+                    # 第一步: 进入首页
+                    await goto_home(page)
+                    # 首页加载完稍作等待
+                    await page.wait_for_timeout(5000)
 
-                # 第二步: 在首页上点击分类标签
-                # "中央法规"默认已选中，无需切换；其余分类需要点击对应标签。
-                # 注意：必须在首页上点击分类标签（首页标签文本不含数字后缀），
-                # 而非搜索结果页上的标签（标签文本含结果数量如"立法资料(171)"）。
-                if nav_needed:
-                    nav_ok = await click_category_nav(page, cat_label)
-                    if not nav_ok:
-                        print(f"跳过分类 '{cat_label}': 导航失败。")
-                        continue
-                else:
-                    print(f"分类 '{cat_label}' 是默认分类。跳过导航。")
+                    # 第二步: 在首页上点击分类标签
+                    # "中央法规"默认已选中，无需切换；其余分类需要点击对应标签。
+                    # 注意：必须在首页上点击分类标签（首页标签文本不含数字后缀），
+                    # 而非搜索结果页上的标签（标签文本含结果数量如"立法资料(171)"）。
+                    if nav_needed:
+                        nav_ok = await click_category_nav(page, cat_label)
+                        if not nav_ok:
+                            print(f"跳过分类 '{cat_label}': 导航失败。")
+                            continue
+                    else:
+                        print(f"分类 '{cat_label}' 是默认分类。跳过导航。")
 
-                # 第三步: 搜索关键词
-                search_ok = await search_by_title(page, keyword)
-                if not search_ok:
-                    print(f"跳过分类 '{cat_label}': 搜索失败。")
-                    continue
-
-                # 第四步: 收集默认子分类的结果
-                items_needed = max_items if max_items > 0 else 100
-                all_seen_titles = set(title_dedup_key(r.title) for r in all_records if title_dedup_key(r.title))
-
-                found_recs = await click_load_more_until_done(
-                    page, all_seen_titles, cat_label,
-                    max_items=items_needed, month_prefix=current_month_prefix,
-                )
-
-                all_records.extend(found_recs)
-                print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
-
-                # 第五步: 处理额外的子分类标签（如"法规解读"）
-                # 在同一个搜索结果页上切换子分类标签并收集结果
-                for sub_key, sub_label in sub_tabs:
-                    print(f"正在处理子分类: {sub_label} ({sub_key})")
-                    sub_ok = await click_sub_tab(page, sub_label)
-                    if not sub_ok:
-                        print(f"跳过子分类 '{sub_label}': 切换失败。")
+                    # 第三步: 搜索关键词
+                    search_ok = await search_by_title(page, keyword)
+                    if not search_ok:
+                        print(f"跳过分类 '{cat_label}': 搜索失败。")
                         continue
 
+                    # 第四步: 收集默认子分类的结果
+                    items_needed = max_items if max_items > 0 else 100
                     all_seen_titles = set(title_dedup_key(r.title) for r in all_records if title_dedup_key(r.title))
-                    sub_recs = await click_load_more_until_done(
-                        page, all_seen_titles, sub_label,
+
+                    found_recs = await click_load_more_until_done(
+                        page, all_seen_titles, cat_label,
                         max_items=items_needed, month_prefix=current_month_prefix,
                     )
-                    all_records.extend(sub_recs)
-                    print(f"为 {sub_label} 找到 {len(sub_recs)} 条记录")
+
+                    all_records.extend(found_recs)
+                    print(f"为 {cat_label} 找到 {len(found_recs)} 条记录")
+
+                    # 第五步: 处理额外的子分类标签（如"法规解读"）
+                    # 在同一个搜索结果页上切换子分类标签并收集结果
+                    for sub_key, sub_label in sub_tabs:
+                        print(f"正在处理子分类: {sub_label} ({sub_key})")
+                        sub_ok = await click_sub_tab(page, sub_label)
+                        if not sub_ok:
+                            print(f"跳过子分类 '{sub_label}': 切换失败。")
+                            continue
+
+                        all_seen_titles = set(title_dedup_key(r.title) for r in all_records if title_dedup_key(r.title))
+                        sub_recs = await click_load_more_until_done(
+                            page, all_seen_titles, sub_label,
+                            max_items=items_needed, month_prefix=current_month_prefix,
+                        )
+                        all_records.extend(sub_recs)
+                        print(f"为 {sub_label} 找到 {len(sub_recs)} 条记录")
+                except WafBlockedError as e:
+                    # WAF 限流是日常可预期情况：跳过剩余分类，照常写盘已收集记录，
+                    # 缺失的详情字段留待下次运行（或 --enrich-existing）补全。
+                    print(
+                        f"WARNING: 关键词 '{keyword}' 在分类 '{cat_label}' 被 WAF 拦截"
+                        f"（{e}）。已收集 {len(all_records)} 条，跳过剩余分类。"
+                    )
+                    waf_blocked = True
+                    break
 
             # 第五步: 访问每条记录的详情页，获取制定机关、效力位阶
             all_records = deduplicate_records_by_title(all_records)
             print(f"按标题去重后待补全详情记录数: {len(all_records)}")
-            print(f"开始获取 {len(all_records)} 条记录的详情信息...")
-            await enrich_records_with_details(page, all_records, existing_data)
+            if waf_blocked:
+                print("WARNING: 因 WAF 拦截跳过详情补全，缺失字段留待后续运行补全。")
+            else:
+                print(f"开始获取 {len(all_records)} 条记录的详情信息...")
+                await enrich_records_with_details(page, all_records, existing_data)
 
             # 第六步: 按关键词清单对标题进行二次过滤
             effective_filter_keywords = filter_keywords if filter_keywords else [keyword]
