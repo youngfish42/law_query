@@ -1,9 +1,13 @@
 import argparse
 import asyncio
+import calendar
 import csv
 import json
+import os
 import re
+import time
 import unicodedata
+import urllib.request
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,6 +27,17 @@ def now_cn() -> datetime:
 BASE_URL = "https://www.pkulaw.com"
 # Pause (ms) between detail-page requests to avoid overloading the server
 DETAIL_PAGE_DELAY_MS = 1000
+
+# 北大法宝 MCP 服务（streamable HTTP，JSON-RPC）。授权码从环境变量读取，不落盘。
+MCP_LAW_ENDPOINT = "https://apim-gateway.pkulaw.com/mcp-law"
+MCP_TOKEN_ENV = "PKULAW_MCP_TOKEN"
+MCP_REQUEST_TIMEOUT_S = 60
+# get_law_list 的时效性过滤：排除废止/失效/已被修改的条目
+MCP_TIMELINESS = ["现行有效", "尚未施行"]
+# 相邻两次 MCP 调用的间隔（秒），保持礼貌请求节奏
+MCP_CALL_DELAY_S = 0.3
+# 每个检索字段（标题/全文）在自适应日期窗拆分下的最大调用次数，防止异常失控
+MCP_MAX_WINDOW_CALLS = 30
 
 # 反 WAF 人机验证（“访问安全验证”拦截页）所需的浏览器参数。
 # 站点对 headless Chromium 指纹（navigator.webdriver 等）返回 567 拦截页，
@@ -936,6 +951,253 @@ def filter_records_by_keywords(records: List[Record], keywords: List[str]) -> Li
     return filtered
 
 
+# === 北大法宝 MCP 服务（JSON-RPC over streamable HTTP，仅 stdlib） ===
+
+def _mcp_rpc(token: str, method: str, params: Optional[dict], req_id: Optional[int]) -> dict:
+    """向 MCP 端点发送一条 JSON-RPC 消息并返回响应（响应可能是 JSON 或 SSE）。"""
+    message: dict = {"jsonrpc": "2.0", "method": method}
+    if req_id is not None:
+        message["id"] = req_id
+    if params is not None:
+        message["params"] = params
+    body = json.dumps(message, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        MCP_LAW_ENDPOINT,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=MCP_REQUEST_TIMEOUT_S) as resp:
+        content_type = resp.headers.get("Content-Type", "")
+        raw = resp.read().decode("utf-8")
+    if req_id is None:
+        return {}
+    if "text/event-stream" in content_type:
+        # SSE：逐行扫描 data: 负载，取与本请求 id 匹配的那条响应。
+        for line in raw.splitlines():
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if not payload:
+                continue
+            try:
+                msg = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("id") == req_id:
+                return msg
+        raise RuntimeError(f"MCP 响应中未找到 id={req_id} 的结果: {raw[:200]}")
+    return json.loads(raw)
+
+
+def _month_implement_range(month_prefix: str) -> tuple:
+    """由 'YYYY.MM' 生成当月施行日期范围（'YYYY.M.D' 非补零，与接口文档示例一致）。"""
+    year, month = (int(part) for part in month_prefix.split("."))
+    last_day = calendar.monthrange(year, month)[1]
+    return f"{year}.{month}.1", f"{year}.{month}.{last_day}"
+
+
+def _mcp_handshake(token: str) -> None:
+    """完成 MCP 会话初始化（该服务端无会话状态，每次进程初始化一次即可）。"""
+    _mcp_rpc(token, "initialize", {
+        "protocolVersion": "2025-03-26",
+        "capabilities": {},
+        "clientInfo": {"name": "law_scraper", "version": "1.0"},
+    }, req_id=1)
+    _mcp_rpc(token, "notifications/initialized", None, req_id=None)
+
+
+def _mcp_call_get_law_list(
+    token: str,
+    keyword: str,
+    start_date: str,
+    end_date: str,
+    field: str = "title",
+) -> List[dict]:
+    """调用 get_law_list 工具检索法规列表（服务端单次上限 20 条、按相关度排序）。
+
+    field 为 'title'（标题关键词）或 'fulltext'（正文关键词）；
+    必须传入施行日期范围，否则当月新法规会被历史高相关度条目挤出前 20 条（实测 0/20）。"""
+    arguments = {
+        field: keyword,
+        "timeliness": MCP_TIMELINESS,
+        "startImplementDate": start_date,
+        "endImplementDate": end_date,
+    }
+    resp = _mcp_rpc(token, "tools/call", {
+        "name": "get_law_list",
+        "arguments": arguments,
+    }, req_id=2)
+    if "error" in resp:
+        raise RuntimeError(f"MCP 调用失败: {resp['error']}")
+    result = resp.get("result", {})
+    if result.get("isError"):
+        texts = [c.get("text", "") for c in result.get("content", [])]
+        raise RuntimeError(f"MCP 工具返回错误: {' '.join(texts)[:200]}")
+    payload = result.get("structuredContent")
+    if payload is None:
+        # 兼容无 structuredContent 的服务端：content[0].text 为 JSON 文本
+        for c in result.get("content", []):
+            if c.get("type") == "text":
+                payload = json.loads(c.get("text") or "{}")
+                break
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("Data")
+    if not isinstance(data, list):
+        print(f"WARNING: MCP 返回无数据（Message={payload.get('Message', '?')}）")
+        return []
+    return data
+
+
+def _mcp_search_month(token: str, keyword: str, month_prefix: str, field: str) -> List[dict]:
+    """对目标月份做自适应日期窗拆分检索，规避服务端 20 条上限。
+
+    从整月窗口开始，凡命中 20 条上限（结果可能被截断）的窗口二分拆分后重查，
+    最小粒度为天（单日超过 20 条时接受截断）。调用间隔 MCP_CALL_DELAY_S。"""
+    year, month = (int(part) for part in month_prefix.split("."))
+    last_day = calendar.monthrange(year, month)[1]
+
+    items: List[dict] = []
+    calls = 0
+    windows = [(1, last_day)]
+    while windows:
+        if calls >= MCP_MAX_WINDOW_CALLS:
+            print(
+                f"WARNING: {field} 检索已达最大调用次数 {MCP_MAX_WINDOW_CALLS}，"
+                f"剩余 {len(windows)} 个日期窗未查，结果可能不全。"
+            )
+            break
+        day_start, day_end = windows.pop()
+        start_date = f"{year}.{month}.{day_start}"
+        end_date = f"{year}.{month}.{day_end}"
+        data = _mcp_call_get_law_list(token, keyword, start_date, end_date, field)
+        calls += 1
+        time.sleep(MCP_CALL_DELAY_S)
+        if len(data) >= 20 and day_end > day_start:
+            mid = (day_start + day_end) // 2
+            windows.append((day_start, mid))
+            windows.append((mid + 1, day_end))
+            print(f"DEBUG: {field} 窗口 {start_date}~{end_date} 命中上限 20 条，拆分后继续")
+            continue
+        items.extend(data)
+
+    print(f"MCP {field} 检索: 关键词 '{keyword}' 共 {calls} 次调用，返回 {len(items)} 条原始结果")
+    return items
+
+
+_MD_LINK_RE = re.compile(r"\[[^\]]*\]\((https?://[^)\s]+)\)")
+_MCP_DATE_RE = re.compile(r"(\d{4})[.\-/](\d{1,2})(?:[.\-/](\d{1,2}))?")
+
+
+def _normalize_mcp_date(value: str) -> str:
+    """MCP 返回的日期可能是 '2026.9.7' 这类非补零格式，统一规整为 YYYY.MM.DD。"""
+    m = _MCP_DATE_RE.search(value or "")
+    if not m:
+        return ""
+    return normalize_date_token(m.group(1), m.group(2), m.group(3) or "")
+
+
+def _record_from_mcp_item(item: dict) -> Optional[Record]:
+    """把 get_law_list 的单条结果映射为 Record。分类由 URL 路径段推断（chl/lar）。"""
+    title = (item.get("Title") or "").strip()
+    raw_url = (item.get("Url") or "").strip()
+    m = _MD_LINK_RE.search(raw_url)
+    url = m.group(1) if m else raw_url
+    # 去掉 MCP 追踪参数，使 URL 与浏览器抓取的规范形式一致
+    url = re.sub(r"[?&]way=mcp", "", url)
+    if not title or not url:
+        return None
+
+    departments = [d for d in (item.get("IssueDepartment") or []) if d]
+    hierarchies = [h for h in (item.get("EffectivenessDic") or []) if h]
+
+    return Record(
+        category=enforce_category_by_url("", url),
+        title=title,
+        url=url,
+        publish_date=_normalize_mcp_date(item.get("IssueDate") or ""),
+        issuing_authority=departments[-1] if departments else "",
+        legal_hierarchy="；".join(hierarchies),
+        effective_date=_normalize_mcp_date(item.get("ImplementDate") or ""),
+    )
+
+
+def run_mcp(
+    keyword: str,
+    out_csv: Path,
+    out_json: Optional[Path],
+    max_items: int,
+    filter_keywords: Optional[List[str]] = None,
+    month: Optional[str] = None,
+    fulltext: bool = False,
+) -> List[Record]:
+    """通过北大法宝 MCP 服务检索法规并写入 CSV（独立于浏览器抓取路径）。
+
+    默认仅按标题（title）检索；传入 --fulltext 时追加正文（fulltext）检索，
+    均由 _mcp_search_month 按目标月份做自适应日期窗拆分，规避服务端 20 条上限。"""
+    token = os.environ.get(MCP_TOKEN_ENV, "").strip()
+    if not token:
+        raise SystemExit(
+            f"未设置环境变量 {MCP_TOKEN_ENV}（北大法宝 MCP 授权码）。"
+            f"请先 export {MCP_TOKEN_ENV}=<token> 再重试。"
+        )
+
+    current_month_prefix = month or now_cn().strftime("%Y.%m")
+    print(f"目标月份: {current_month_prefix}")
+    print(f"正在通过 MCP 检索关键词: {keyword}（标题{' + 正文' if fulltext else ''}）")
+
+    _mcp_handshake(token)
+    title_items = _mcp_search_month(token, keyword, current_month_prefix, "title")
+    fulltext_items = (
+        _mcp_search_month(token, keyword, current_month_prefix, "fulltext")
+        if fulltext
+        else []
+    )
+
+    all_records: List[Record] = []
+    for item in title_items + fulltext_items:
+        rec = _record_from_mcp_item(item)
+        if rec is None:
+            continue
+        # 与浏览器路径一致的“本月”判定：优先施行日期，否则公布日期
+        date_to_check = rec.effective_date or rec.publish_date
+        if not date_to_check.startswith(current_month_prefix):
+            print(f"DEBUG: 跳过记录 '{rec.title[:40]}' - 日期 {date_to_check} 不在 {current_month_prefix} 中")
+            continue
+        all_records.append(rec)
+
+    all_records = deduplicate_records_by_title(all_records)
+
+    # 标题二次过滤只约束「标题检索」来源的记录；
+    # 仅由正文命中的记录（标题不含关键词）是全文检索的预期产出，直接保留。
+    title_keys = {
+        title_dedup_key((item.get("Title") or "").strip())
+        for item in title_items
+    }
+    title_sourced = [r for r in all_records if title_dedup_key(r.title) in title_keys]
+    fulltext_only = [r for r in all_records if title_dedup_key(r.title) not in title_keys]
+
+    effective_filter_keywords = filter_keywords if filter_keywords else [keyword]
+    title_sourced = filter_records_by_keywords(title_sourced, effective_filter_keywords)
+    all_records = title_sourced + fulltext_only
+    all_records = deduplicate_records_by_title(all_records)
+    if max_items > 0:
+        all_records = all_records[:max_items]
+    print(
+        f"过滤后剩余 {len(all_records)} 条记录"
+        f"（标题命中 {len(title_sourced)} 条，仅正文命中 {len(fulltext_only)} 条）"
+    )
+
+    write_csv(out_csv, all_records)
+    if out_json:
+        write_json(out_json, all_records)
+    return all_records
+
+
 def write_csv(path: Path, rows: Iterable[Record]) -> None:
     # 读取已有数据进行合并（使用双 key：URL path + 标题去全部空白）
     by_title: dict = {}
@@ -1211,6 +1473,20 @@ def parse_args() -> argparse.Namespace:
         help="仅对 CSV 中已存在但缺少制定机关/效力位阶的条目补全信息（不执行新搜索）",
     )
 
+    ap.add_argument(
+        "--source",
+        choices=["browser", "mcp"],
+        default="browser",
+        help="数据来源：browser=模拟浏览器抓取（默认）；mcp=北大法宝 MCP 服务"
+        f"（需设置环境变量 {MCP_TOKEN_ENV}）",
+    )
+    ap.add_argument(
+        "--fulltext",
+        action="store_true",
+        help="仅 --source mcp 有效：在标题检索之外追加正文（fulltext）检索"
+        "（覆盖面更广，但正文顺带提及的条目会带来噪声，默认关闭）",
+    )
+
     return ap.parse_args()
 
 
@@ -1248,19 +1524,30 @@ def main() -> None:
         print(f"CSV文件: {out_csv.resolve()}")
         return
 
-    records = asyncio.run(
-        run(
+    if args.source == "mcp":
+        records = run_mcp(
             keyword=args.keyword,
             out_csv=out_csv,
             out_json=out_json,
-            headless=headless,
-            slow_mo=args.slow_mo,
             max_items=args.max_items,
-            user_data_dir=user_data_dir,
             filter_keywords=filter_keywords,
             month=month,
+            fulltext=args.fulltext,
         )
-    )
+    else:
+        records = asyncio.run(
+            run(
+                keyword=args.keyword,
+                out_csv=out_csv,
+                out_json=out_json,
+                headless=headless,
+                slow_mo=args.slow_mo,
+                max_items=args.max_items,
+                user_data_dir=user_data_dir,
+                filter_keywords=filter_keywords,
+                month=month,
+            )
+        )
 
     print(f"完成。总记录数: {len(records)}")
     print(f"CSV文件: {out_csv.resolve()}")

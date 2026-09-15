@@ -9,6 +9,14 @@ on:
         description: '检索关键词（留空则依次检索所有默认关键词）'
         required: false
         default: ''
+      source:
+        description: '数据来源：mcp=北大法宝 MCP 服务（失败时回退浏览器）；browser=模拟浏览器'
+        required: false
+        default: 'mcp'
+        type: choice
+        options:
+          - mcp
+          - browser
       enrich_existing:
         description: '仅补全已有条目的制定机关/效力位阶（不执行新搜索，true/false）'
         required: false
@@ -22,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: Asia/Shanghai
+      PKULAW_MCP_TOKEN: ${{ secrets.PKULAW_MCP_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -56,11 +65,23 @@ jobs:
               KEYWORDS=("智能" "数智化" "AI" "高质量数据" "大模型" "算力" "工业互联网" "新兴产业" "未来产业" "数字化")
             fi
 
+            # 数据来源：定时触发默认 mcp（MCP 优先）；手动触发可用 source 输入覆盖
+            SOURCE="${{ inputs.source || 'mcp' }}"
+            echo "Source: $SOURCE"
+
             for KW in "${KEYWORDS[@]}"; do
               echo "=========================================="
               echo "正在查询关键词: $KW"
               echo "=========================================="
-              python query.py --keyword "$KW" --out "法规.csv"
+              if [ "$SOURCE" = "mcp" ]; then
+                # MCP 优先：失败（无 token / 网络 / 服务端错误）时回退浏览器抓取
+                if ! python query.py --source mcp --keyword "$KW" --out "法规_mcp.csv"; then
+                  echo "WARNING: MCP 抓取失败，回退浏览器抓取: $KW"
+                  python query.py --keyword "$KW" --out "法规.csv"
+                fi
+              else
+                python query.py --keyword "$KW" --out "法规.csv"
+              fi
             done
           fi
           
@@ -78,6 +99,8 @@ jobs:
           git config --local user.email "youngfish42@users.noreply.github.com"
           git config --local user.name "youngfish42"
           git add 法规.csv meta.json feed.xml
+          # MCP 独立输出文件（browser 模式下可能不存在）
+          if [ -f "法规_mcp.csv" ]; then git add "法规_mcp.csv"; fi
           
           # Check for staged changes
           if git diff --staged --quiet; then
@@ -93,5 +116,6 @@ jobs:
           name: query-results
           path: |
             法规.csv
+            法规_mcp.csv
             meta.json
             feed.xml
