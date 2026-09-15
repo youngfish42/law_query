@@ -40,7 +40,7 @@ jobs:
 
       - name: Run MCP backfill
         run: |
-          # MCP 检索仅用标准库，无需安装 playwright
+          # MCP 模式不依赖 playwright（query.py 已做惰性导入），无需安装任何依赖
           KEYWORD_INPUT="${{ inputs.keyword }}"
           if [ -n "$KEYWORD_INPUT" ]; then
             KEYWORDS="$KEYWORD_INPUT"

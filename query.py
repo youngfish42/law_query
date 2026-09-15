@@ -12,9 +12,14 @@ import urllib.request
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 
-from playwright.async_api import async_playwright, Page
+try:
+    from playwright.async_api import async_playwright, Page
+except ImportError:
+    # MCP 模式（--source mcp）仅用标准库，允许在未安装 playwright 的环境中运行
+    async_playwright = None
+    Page = Any
 
 
 CN_TZ = timezone(timedelta(hours=8))
@@ -308,6 +313,14 @@ def infer_authority_for_news(record: Record) -> str:
         if m:
             return m.group(1)
     return ""
+
+
+def _require_playwright() -> None:
+    if async_playwright is None:
+        raise SystemExit(
+            "浏览器模式需要安装 playwright："
+            "pip install -r requirements.txt && playwright install chromium"
+        )
 
 
 async def new_stealth_context(
@@ -1230,8 +1243,9 @@ def run_mcp(
         raise SystemExit(EXIT_MCP_UNAVAILABLE)
 
     current_month_prefix = month or now_cn().strftime("%Y.%m")
+    today = now_cn()
     if days and not month:
-        segments = _recent_windows(now_cn(), days)
+        segments = _recent_windows(today, days)
         print(f"目标月份: {current_month_prefix}（增量模式：最近 {days} 天，分段 {segments}）")
     else:
         segments = [(current_month_prefix, 1, None)]
@@ -1242,11 +1256,14 @@ def run_mcp(
         _mcp_handshake(token)
         title_items: List[dict] = []
         fulltext_items: List[dict] = []
+        truncated_segments = set()
         for prefix, day_start, day_end in segments:
-            items, _, _ = _mcp_search_month(
+            items, _, truncated = _mcp_search_month(
                 token, keyword, prefix, "title", day_start=day_start, day_end=day_end,
             )
             title_items.extend(items)
+            if truncated:
+                truncated_segments.add(prefix)
             if fulltext:
                 items, _, _ = _mcp_search_month(
                     token, keyword, prefix, "fulltext", day_start=day_start, day_end=day_end,
@@ -1287,11 +1304,14 @@ def run_mcp(
     if out_json:
         write_json(out_json, all_records)
 
-    # 本次扫描的“确定覆盖”日区间并入覆盖账本，回填模式据此跳过已调研窗口
-    today = now_cn()
+    # 本次扫描的“确定覆盖”日区间并入覆盖账本，回填模式据此跳过已调研窗口；
+    # 标题检索被截断的分段不记账（存在未查窗口），留待回填补扫
     coverage = _load_backfill_state(MCP_BACKFILL_STATE_PATH)
     recorded = False
     for prefix, day_start, day_end in segments:
+        if prefix in truncated_segments:
+            print(f"WARNING: 分段 {prefix} 标题检索被截断，本次不记入覆盖账本。")
+            continue
         last_day = calendar.monthrange(*(int(p) for p in prefix.split(".")))[1]
         iv = _definitive_interval(prefix, day_start, day_end or last_day, today)
         if iv:
@@ -1442,7 +1462,14 @@ def run_mcp_backfill(
         print(f"积分预算 {points_budget} ≈ {budget_calls} 次检索调用（约 {MCP_POINTS_PER_CALL} 积分/次）")
     print(f"回填范围: 当月补漏 + {start_month} ~ {prev_month_prefix}，共 {len(months)} 个月 × {len(keywords)} 个关键词")
 
-    _mcp_handshake(token)
+    try:
+        _mcp_handshake(token)
+    except McpUnavailableError as e:
+        print(f"MCP 不可用（积分不足或授权问题）: {e}，本次回填未开始，进度无变化。")
+        return
+    except Exception as e:
+        print(f"WARNING: MCP 连接失败: {e}，本次回填未开始。")
+        return
     calls_used = 0
     stop = False
     for month_prefix in months:
@@ -1633,6 +1660,7 @@ async def run_enrich_existing(
 
     print(f"共 {len(existing)} 条现有记录，其中 {len(to_enrich)} 条需要补全详情信息。")
 
+    _require_playwright()
     async with async_playwright() as p:
         context, browser = await new_stealth_context(
             p, headless=headless, slow_mo=slow_mo, user_data_dir=user_data_dir
@@ -1666,6 +1694,7 @@ async def run(
     filter_keywords: Optional[List[str]] = None,
     month: Optional[str] = None,
 ) -> List[Record]:
+    _require_playwright()
     async with async_playwright() as p:
         context, browser = await new_stealth_context(
             p, headless=headless, slow_mo=slow_mo, user_data_dir=user_data_dir
@@ -1878,6 +1907,9 @@ def main() -> None:
         if not re.fullmatch(r"\d{4}\.\d{2}", args.month):
             raise SystemExit(f"--month 格式应为 YYYY.MM，收到: {args.month!r}")
         month = args.month
+
+    if args.days is not None and args.days < 1:
+        raise SystemExit(f"--days 应为正整数，收到: {args.days!r}")
 
     if args.enrich_existing:
         records = asyncio.run(
