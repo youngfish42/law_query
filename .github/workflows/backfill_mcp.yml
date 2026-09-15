@@ -4,13 +4,13 @@ on:
   workflow_dispatch:      # 仅手动触发：领取签到积分（约 10000 分/日）后运行
     inputs:
       start_month:
-        description: '回填起始月份（YYYY.MM，含该月；回填至上月为止，最近月份优先）'
+        description: '回填起始月份（YYYY.MM，含该月；优先补当月缺漏，再倒序回填历史月份，只扫未覆盖的日期窗口）'
         required: true
         default: '2025.01'
       points_budget:
-        description: '本次可用积分预算（每次检索调用约 25 积分，10000 积分 ≈ 400 次调用）'
+        description: '本次积分预算（每次检索调用约 25 积分；0=不限，持续到积分耗尽为止，进度实时保存、下次续扫）'
         required: false
-        default: '10000'
+        default: '0'
       keyword:
         description: '检索关键词，逗号分隔（留空则依次使用所有默认关键词）'
         required: false

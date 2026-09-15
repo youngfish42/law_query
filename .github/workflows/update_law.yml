@@ -77,14 +77,25 @@ jobs:
               echo "周一：全月复核（不使用增量窗口）"
             fi
 
+            # MCP 当日可用性标记：命中确定性错误（退出码 2）后置 false
+            MCP_AVAILABLE=true
+
             for KW in "${KEYWORDS[@]}"; do
               echo "=========================================="
               echo "正在查询关键词: $KW"
               echo "=========================================="
-              if [ "$SOURCE" = "mcp" ]; then
-                # MCP 优先：失败（无 token / 网络 / 服务端错误）时回退浏览器抓取
-                if ! python query.py --source mcp --keyword "$KW" --out "法规_mcp.csv" $DAYS_FLAG; then
-                  echo "WARNING: MCP 抓取失败，回退浏览器抓取: $KW"
+              if [ "$SOURCE" = "mcp" ] && [ "$MCP_AVAILABLE" = "true" ]; then
+                # MCP 优先；按退出码分级处置：
+                #   2 = 积分不足/授权问题（确定性），本日剩余关键词全部改走浏览器
+                #   1 = 瞬时故障，仅本关键词回退浏览器，后续关键词仍尝试 MCP
+                rc=0
+                python query.py --source mcp --keyword "$KW" --out "法规_mcp.csv" $DAYS_FLAG || rc=$?
+                if [ $rc -eq 2 ]; then
+                  echo "::warning::MCP 当日不可用（积分不足或授权问题），剩余关键词改用浏览器抓取"
+                  MCP_AVAILABLE=false
+                  python query.py --keyword "$KW" --out "法规.csv"
+                elif [ $rc -ne 0 ]; then
+                  echo "::warning::MCP 临时故障，关键词 $KW 回退浏览器抓取"
                   python query.py --keyword "$KW" --out "法规.csv"
                 fi
               else
@@ -107,8 +118,9 @@ jobs:
           git config --local user.email "youngfish42@users.noreply.github.com"
           git config --local user.name "youngfish42"
           git add 法规.csv meta.json feed.xml
-          # MCP 独立输出文件（browser 模式下可能不存在）
+          # MCP 独立输出文件与覆盖账本（browser 模式或未跑 MCP 时可能不存在）
           if [ -f "法规_mcp.csv" ]; then git add "法规_mcp.csv"; fi
+          if [ -f "mcp_backfill_state.json" ]; then git add "mcp_backfill_state.json"; fi
           
           # Check for staged changes
           if git diff --staged --quiet; then
