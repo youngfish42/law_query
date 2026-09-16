@@ -7,10 +7,12 @@
     <link rel="alternate" type="application/rss+xml" title="AI法规库 RSS订阅" href="feed.xml">
     <style>
         :root {
+            color-scheme: light;
             --primary-color: #007bff;
             --hover-color: #0056b3;
             --bg-color: #f8f9fa;
             --border-color: #dee2e6;
+            --border-strong: #dae0e5;
             --card-bg: #ffffff;
             --text-color: #333333;
             --text-secondary: #495057;
@@ -102,6 +104,8 @@
             overflow-x: auto;
             border: 1px solid var(--border-color);
             border-radius: 4px;
+            /* 翻页 scrollIntoView 时不被 sticky 工具栏遮挡（略大于工具栏高度） */
+            scroll-margin-top: 150px;
         }
 
         table { 
@@ -183,8 +187,20 @@
             display: block;
         }
 
-        td.cell-title a { line-height: 1.5; }
+        td.cell-title a,
+        td.cell-title .title-plain {
+            display: inline;
+            line-height: 1.5;
+        }
+        td.cell-title .title-plain {
+            color: var(--heading-color);
+            font-weight: 500;
+        }
         td.cell-title a:visited { color: var(--muted-color); }
+        tbody tr.data-row:focus-visible {
+            outline: 2px solid var(--primary-color);
+            outline-offset: -2px;
+        }
 
         a:hover { 
             color: var(--primary-color); 
@@ -214,7 +230,7 @@
 
         .pagination button:hover:not(:disabled) {
             background-color: var(--header-hover-bg);
-            border-color: #dae0e5;
+            border-color: var(--border-strong);
         }
 
         .pagination button:disabled {
@@ -485,7 +501,7 @@
             .chip { padding: 6px 12px; font-size: 0.82em; }
 
             /* Hide the table header on mobile */
-            .table-responsive { border: none; }
+            .table-responsive { border: none; scroll-margin-top: 250px; }
             table { min-width: unset; }
             table thead { display: none; }
 
@@ -616,10 +632,12 @@
         /* Dark mode */
         @media (prefers-color-scheme: dark) {
             :root {
+                color-scheme: dark;
                 --primary-color: #4d9fff;
                 --hover-color: #79b4ff;
                 --bg-color: #15181c;
                 --border-color: #3a3f45;
+                --border-strong: #4a5058;
                 --card-bg: #1f2329;
                 --text-color: #e2e6ea;
                 --text-secondary: #b8bec5;
@@ -664,9 +682,9 @@
         <div class="toolbar">
             <div class="controls">
                 <div class="search-box-container">
-                    <input type="text" id="searchInput" placeholder="搜索标题、分类、日期、机关或位阶..." oninput="handleSearch()">
+                    <input type="text" id="searchInput" placeholder="搜索标题、分类、日期、机关或位阶...">
                     <button class="search-clear" id="searchClear" onclick="clearSearch()" aria-label="清除搜索">✕</button>
-                    <span class="search-icon">🔍</span>
+                    <span class="search-icon" aria-hidden="true">🔍</span>
                 </div>
                 <div class="stats" id="statsInfo">共 0 条记录</div>
                 <select id="mobileSortSelect" class="mobile-sort-select" onchange="handleMobileSort()" aria-label="排序方式">
@@ -686,12 +704,12 @@
 
             <div class="filter-chips">
                 <div class="chip-group" id="categoryChips" role="group" aria-label="分类筛选">
-                    <button class="chip active" data-value="all" onclick="setCategoryFilter('all')">全部</button>
-                    <button class="chip" data-value="中央法规" onclick="setCategoryFilter('中央法规')">中央法规</button>
-                    <button class="chip" data-value="地方法规" onclick="setCategoryFilter('地方法规')">地方法规</button>
-                    <button class="chip" data-value="立法资料" onclick="setCategoryFilter('立法资料')">立法资料</button>
-                    <button class="chip" data-value="法规解读" onclick="setCategoryFilter('法规解读')">法规解读</button>
-                    <button class="chip" data-value="法律动态" onclick="setCategoryFilter('法律动态')">法律动态</button>
+                    <button class="chip active" data-value="all" aria-pressed="true" onclick="setCategoryFilter('all')">全部</button>
+                    <button class="chip" data-value="中央法规" aria-pressed="false" onclick="setCategoryFilter('中央法规')">中央法规</button>
+                    <button class="chip" data-value="地方法规" aria-pressed="false" onclick="setCategoryFilter('地方法规')">地方法规</button>
+                    <button class="chip" data-value="立法资料" aria-pressed="false" onclick="setCategoryFilter('立法资料')">立法资料</button>
+                    <button class="chip" data-value="法规解读" aria-pressed="false" onclick="setCategoryFilter('法规解读')">法规解读</button>
+                    <button class="chip" data-value="法律动态" aria-pressed="false" onclick="setCategoryFilter('法律动态')">法律动态</button>
                 </div>
             </div>
         </div>
@@ -774,13 +792,22 @@
             return safeTitle.replace(re, '<mark>$1</mark>');
         }
 
-        // publish_date 在参考日期（meta.updated_at，缺省为当前日期）前 7 天内视为新发
+        // 统一换算为北京时间（+08:00）的日历日，避免访客本地时区影响「新」判定
+        function toBeijingDate(d) {
+            const shifted = new Date(d.getTime() + 8 * 3600000);
+            return new Date(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+        }
+
+        // publish_date 在参考日期（meta.updated_at，北京时间；缺省为本地当天零点）前 7 天内视为新发
         function isNewRecord(publishDate) {
             const m = /^(\d{4})\.(\d{2})(?:\.(\d{2}))?/.exec(publishDate || '');
             if (!m) return false;
+            // 取舍：仅有月份（YYYY.MM）时按当月 1 号参与判定
             const pub = new Date(+m[1], +m[2] - 1, m[3] ? +m[3] : 1);
             if (isNaN(pub.getTime())) return false;
-            const days = ((dataReferenceDate || new Date()) - pub) / 86400000;
+            const now = new Date();
+            const ref = dataReferenceDate || new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const days = Math.floor((toBeijingDate(ref) - toBeijingDate(pub)) / 86400000);
             return days >= 0 && days <= NEW_BADGE_DAYS;
         }
 
@@ -793,18 +820,33 @@
 
         function updateChipStates() {
             document.querySelectorAll('#categoryChips .chip').forEach(chip => {
-                chip.classList.toggle('active', chip.dataset.value === currentCategoryFilter);
+                const active = chip.dataset.value === currentCategoryFilter;
+                chip.classList.toggle('active', active);
+                chip.setAttribute('aria-pressed', String(active));
             });
+        }
+
+        // 默认状态不写 hash，保持首屏 URL 干净
+        function isDefaultState() {
+            return !document.getElementById('searchInput').value.trim()
+                && currentCategoryFilter === 'all'
+                && currentSort.column === 'publish_date'
+                && currentSort.direction === 'desc'
+                && currentPage === 1;
         }
 
         // 状态写入 location.hash（replaceState 不触发 hashchange，避免自循环）
         function updateHash() {
+            if (isDefaultState()) {
+                history.replaceState(null, '', location.pathname + location.search);
+                return;
+            }
             const params = new URLSearchParams();
             const q = document.getElementById('searchInput').value.trim();
             if (q) params.set('q', q);
             if (currentCategoryFilter !== 'all') params.set('cat', currentCategoryFilter);
-            params.set('sort', currentSort.column);
-            params.set('dir', currentSort.direction);
+            if (currentSort.column !== 'publish_date') params.set('sort', currentSort.column);
+            if (currentSort.direction !== 'desc') params.set('dir', currentSort.direction);
             if (currentPage > 1) params.set('page', String(currentPage));
             const hash = params.toString();
             history.replaceState(null, '', hash ? '#' + hash : location.pathname + location.search);
@@ -855,34 +897,43 @@
                 if (e.key === 'Enter') handlePageJump();
             });
 
-            // Re-render on resize / orientation change to update items-per-page
+            // Search input: IME 组合期间不过滤，输入防抖 150ms
+            const searchInput = document.getElementById('searchInput');
+            let imeComposing = false;
+            let searchDebounceTimer;
+            searchInput.addEventListener('compositionstart', function() { imeComposing = true; });
+            searchInput.addEventListener('compositionend', function() {
+                imeComposing = false;
+                scheduleSearch();
+            });
+            searchInput.addEventListener('input', function() {
+                updateClearBtn();
+                if (imeComposing) return;
+                scheduleSearch();
+            });
+            function scheduleSearch() {
+                clearTimeout(searchDebounceTimer);
+                searchDebounceTimer = setTimeout(handleSearch, 150);
+            }
+
+            // Re-render on resize / orientation change, but only when items-per-page
+            // actually changes (crossing the mobile breakpoint); plain resizes keep the page
+            let lastItemsPerPage = getItemsPerPage();
+            function handleViewportChange() {
+                const perPage = getItemsPerPage();
+                if (perPage === lastItemsPerPage) return;
+                lastItemsPerPage = perPage;
+                currentPage = 1;
+                renderTable();
+            }
             let resizeTimer;
             window.addEventListener('resize', function() {
                 clearTimeout(resizeTimer);
-                resizeTimer = setTimeout(function() {
-                    currentPage = 1;
-                    renderTable();
-                }, 150);
+                resizeTimer = setTimeout(handleViewportChange, 150);
             }, { passive: true });
             window.addEventListener('orientationchange', function() {
-                setTimeout(function() {
-                    currentPage = 1;
-                    renderTable();
-                }, 200);
+                setTimeout(handleViewportChange, 200);
             }, { passive: true });
-
-            // Load timestamp
-            try {
-                const metaResponse = await fetch('meta.json');
-                if (metaResponse.ok) {
-                    const meta = await metaResponse.json();
-                    document.getElementById('timestamp').textContent = `数据更新时间：${meta.updated_at}`;
-                    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(meta.updated_at || '');
-                    if (m) dataReferenceDate = new Date(+m[1], +m[2] - 1, +m[3]);
-                }
-            } catch (e) {
-                console.warn("Failed to load meta.json");
-            }
 
             // Restore state from URL hash, then react to back/forward navigation
             restoreStateFromHash();
@@ -891,7 +942,27 @@
                 applyFilterAndSort();
             });
 
+            // meta.json 与 CSV 并行加载，互不阻塞
+            loadMeta();
             loadCsv();
+        }
+
+        async function loadMeta() {
+            try {
+                const metaResponse = await fetch('meta.json');
+                if (metaResponse.ok) {
+                    const meta = await metaResponse.json();
+                    document.getElementById('timestamp').textContent = `数据更新时间：${meta.updated_at}`;
+                    // updated_at 是北京时间，显式按 +08:00 解析，避免依赖访客本地时区
+                    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(meta.updated_at || '');
+                    if (m) {
+                        const parsed = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4] || '00'}:${m[5] || '00'}:00+08:00`);
+                        if (!isNaN(parsed.getTime())) dataReferenceDate = parsed;
+                    }
+                }
+            } catch (e) {
+                console.warn("Failed to load meta.json");
+            }
         }
 
         function loadCsv() {
@@ -907,6 +978,12 @@
                 complete: function(results) {
                     // Filter out rows that are completely empty or missing critical fields
                     allData = results.data.filter(row => row.title && row.url);
+
+                    // 裁剪展开状态，避免已不存在的数据残留占用
+                    const currentKeys = new Set(allData.map(row => row.url || row.title));
+                    for (const key of expandedRows) {
+                        if (!currentKeys.has(key)) expandedRows.delete(key);
+                    }
 
                     applyFilterAndSort();
                     document.getElementById('loading').style.display = 'none';
@@ -928,6 +1005,7 @@
         }
 
         function retryLoad() {
+            loadMeta();
             loadCsv();
         }
 
@@ -1094,14 +1172,21 @@
                 const tr = document.createElement('tr');
                 tr.className = 'data-row' + (isExpanded ? ' expanded' : '');
                 tr.title = '点击展开详情';
+                tr.tabIndex = 0;
+                tr.setAttribute('aria-expanded', String(isExpanded));
                 const effectiveDateHtml = (row.effective_date && row.effective_date !== row.publish_date)
                     ? `<small style="color:var(--muted-color);">（${escapeHtml(row.effective_date)} 施行）</small>`
                     : '';
                 const newBadgeHtml = isNewRecord(row.publish_date)
                     ? '<span class="badge badge-new">新</span>'
                     : '';
+                // 仅 http(s) 链接渲染为 <a>，其余降级为纯文本
+                const titleHtml = highlightTitle(row.title, highlightTerm);
+                const titleCellHtml = /^https?:\/\//i.test(row.url || '')
+                    ? `<a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(row.title)}">${titleHtml}</a>`
+                    : `<span class="title-plain" title="${escapeHtml(row.title)}">${titleHtml}</span>`;
                 tr.innerHTML = `
-                    <td class="cell-title"><a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(row.title)}">${highlightTitle(row.title, highlightTerm)}${newBadgeHtml}</a></td>
+                    <td class="cell-title">${titleCellHtml}${newBadgeHtml}</td>
                     <td><span class="cell-label">分类</span><span class="badge ${badgeClass}">${escapeHtml(categoryText)}</span></td>
                     <td class="col-date"><span class="cell-label">公布日期</span><span>${escapeHtml(row.publish_date) || '-'}${effectiveDateHtml}</span></td>
                     <td class="col-authority"><span class="cell-label">制定机关</span><span>${escapeHtml(row.issuing_authority) || '-'}</span></td>
@@ -1110,6 +1195,13 @@
                 tr.addEventListener('click', function(e) {
                     if (e.target.closest('a')) return; // 点击链接正常跳转，不展开
                     toggleRowDetail(rowKey);
+                });
+                tr.addEventListener('keydown', function(e) {
+                    if (e.target.closest('a')) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleRowDetail(rowKey);
+                    }
                 });
                 tbody.appendChild(tr);
 
