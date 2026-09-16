@@ -5,6 +5,7 @@ import csv
 import json
 import os
 import re
+import sys
 import time
 import unicodedata
 import urllib.error
@@ -48,6 +49,12 @@ MCP_MAX_WINDOW_CALLS = 30
 MCP_POINTS_PER_CALL = 25
 # 回填进度状态文件（随仓库提交，记录已完成的 月份|关键词 组合）
 MCP_BACKFILL_STATE_PATH = Path("mcp_backfill_state.json")
+# MCP 原始数据全字段落盘文件（JSONL，每行一个 get_law_list 原始 item + __meta）
+MCP_JSONL_DEFAULT_PATH = Path("法规_mcp.jsonl")
+# 旧版 MCP 结果文件（一次性迁移到 JSONL 后不再写入）
+MCP_LEGACY_CSV_PATH = Path("法规_mcp.csv")
+# MCP 派生记录与浏览器抓取结果融合后的统一 CSV
+MERGED_CSV_PATH = Path("法规.csv")
 
 # 反 WAF 人机验证（“访问安全验证”拦截页）所需的浏览器参数。
 # 站点对 headless Chromium 指纹（navigator.webdriver 等）返回 567 拦截页，
@@ -78,6 +85,7 @@ class Record:
     issuing_authority: str = ""  # 制定机关
     legal_hierarchy: str = ""   # 效力位阶
     effective_date: str = ""    # YYYY.MM.DD，来源于列表的“施行/实施/生效”日期
+    source: str = "browser"     # 数据来源：browser | mcp
 
 
 PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}(?:\.\d{2})?)\s*公布")
@@ -193,10 +201,18 @@ def merge_record_fields(base: Record, incoming: Record) -> Record:
         base.category = enforce_category_by_url(incoming.category, incoming.url or base.url)
     if not base.issuing_authority and incoming.issuing_authority:
         base.issuing_authority = incoming.issuing_authority
+    elif incoming.source == "mcp" and len(incoming.issuing_authority) > len(base.issuing_authority):
+        # MCP 现在保留全量制定机关，更完整的值覆盖旧的截断值
+        base.issuing_authority = incoming.issuing_authority
     if not base.legal_hierarchy and incoming.legal_hierarchy:
+        base.legal_hierarchy = incoming.legal_hierarchy
+    elif incoming.source == "mcp" and len(incoming.legal_hierarchy) > len(base.legal_hierarchy):
         base.legal_hierarchy = incoming.legal_hierarchy
     if not base.effective_date and incoming.effective_date:
         base.effective_date = incoming.effective_date
+    # 融合语义：浏览器记录被 MCP 数据命中后升级为 mcp，其余情况保留 base.source
+    if base.source == "browser" and incoming.source == "mcp":
+        base.source = "mcp"
 
     # 同步根据当前 URL 复核 base.category，纠正历史脏数据。
     base.category = enforce_category_by_url(base.category, base.url)
@@ -227,6 +243,7 @@ def _merge_into_maps(record: Record, by_title: dict, by_url: dict) -> None:
             issuing_authority=record.issuing_authority,
             legal_hierarchy=record.legal_hierarchy,
             effective_date=record.effective_date,
+            source=record.source,
         )
         if tkey:
             by_title[tkey] = new_rec
@@ -736,6 +753,7 @@ def load_existing_records(path: Path) -> dict:
                         issuing_authority=row.get("issuing_authority", ""),
                         legal_hierarchy=row.get("legal_hierarchy", ""),
                         effective_date=row.get("effective_date", ""),
+                        source=row.get("source", "") or "browser",
                     )
     except Exception as e:
         print(f"Warning: 读取现有CSV失败: {e}")
@@ -1176,28 +1194,39 @@ def _normalize_mcp_date(value: str) -> str:
     return normalize_date_token(m.group(1), m.group(2), m.group(3) or "")
 
 
-def _record_from_mcp_item(item: dict) -> Optional[Record]:
-    """把 get_law_list 的单条结果映射为 Record。分类由 URL 路径段推断（chl/lar）。"""
-    title = (item.get("Title") or "").strip()
+def _extract_mcp_url(item: dict) -> str:
+    """提取 MCP item 的 Url 字段中的真实链接（可能带 markdown 链接语法）。"""
     raw_url = (item.get("Url") or "").strip()
     m = _MD_LINK_RE.search(raw_url)
     url = m.group(1) if m else raw_url
     # 去掉 MCP 追踪参数，使 URL 与浏览器抓取的规范形式一致
-    url = re.sub(r"[?&]way=mcp", "", url)
+    return re.sub(r"[?&]way=mcp", "", url)
+
+
+def _record_from_mcp_item(item: dict) -> Optional[Record]:
+    """把 get_law_list 的单条结果映射为 Record。分类优先取 item 的 Category
+    （旧 CSV 迁移行携带），最终由 URL 路径段（chl/lar）复核。"""
+    title = (item.get("Title") or "").strip()
+    url = _extract_mcp_url(item)
     if not title or not url:
         return None
 
     departments = [d for d in (item.get("IssueDepartment") or []) if d]
     hierarchies = [h for h in (item.get("EffectivenessDic") or []) if h]
+    # 真实 MCP 响应中 Category 是数组（迁移行是字符串），统一为字符串
+    raw_category = item.get("Category") or ""
+    if isinstance(raw_category, list):
+        raw_category = "；".join(c for c in raw_category if c)
 
     return Record(
-        category=enforce_category_by_url("", url),
+        category=enforce_category_by_url(raw_category, url),
         title=title,
         url=url,
         publish_date=_normalize_mcp_date(item.get("IssueDate") or ""),
-        issuing_authority=departments[-1] if departments else "",
+        issuing_authority="；".join(departments),
         legal_hierarchy="；".join(hierarchies),
         effective_date=_normalize_mcp_date(item.get("ImplementDate") or ""),
+        source="mcp",
     )
 
 
@@ -1223,7 +1252,7 @@ def _records_from_mcp_items(items: List[dict], month_prefixes) -> List[Record]:
 
 def run_mcp(
     keyword: str,
-    out_csv: Path,
+    out_jsonl: Path,
     out_json: Optional[Path],
     max_items: int,
     filter_keywords: Optional[List[str]] = None,
@@ -1231,12 +1260,13 @@ def run_mcp(
     fulltext: bool = False,
     days: Optional[int] = None,
 ) -> List[Record]:
-    """通过北大法宝 MCP 服务检索法规并写入 CSV（独立于浏览器抓取路径）。
+    """通过北大法宝 MCP 服务检索法规：原始结果全字段落盘 JSONL，并派生融合进统一 法规.csv。
 
     默认仅按标题（title）检索；传入 --fulltext 时追加正文（fulltext）检索，
     均由 _mcp_search_month 做自适应日期窗拆分，规避服务端 20 条上限。
     days（--days）启用增量模式：仅检索最近 N 天（月初自动跨入上月尾部），
     供每日任务节省积分；指定 --month 时忽略 days，始终整月检索。"""
+    _migrate_mcp_csv_to_jsonl(MCP_LEGACY_CSV_PATH, out_jsonl)
     token = os.environ.get(MCP_TOKEN_ENV, "").strip()
     if not token:
         print(f"未设置环境变量 {MCP_TOKEN_ENV}（北大法宝 MCP 授权码），请先设置后重试。")
@@ -1276,6 +1306,13 @@ def run_mcp(
         print(f"ERROR: MCP 检索失败: {e}")
         raise SystemExit(1)
 
+    # 原始 items 全字段落盘 JSONL（读旧合并去重后整文件重写）
+    write_mcp_jsonl(
+        out_jsonl,
+        [_with_mcp_meta(it, keyword, "title") for it in title_items]
+        + [_with_mcp_meta(it, keyword, "fulltext") for it in fulltext_items],
+    )
+
     month_prefixes = tuple(s[0] for s in segments)
     all_records = _records_from_mcp_items(title_items + fulltext_items, month_prefixes)
     all_records = deduplicate_records_by_title(all_records)
@@ -1300,7 +1337,9 @@ def run_mcp(
         f"（标题命中 {len(title_sourced)} 条，仅正文命中 {len(fulltext_only)} 条）"
     )
 
-    write_csv(out_csv, all_records)
+    # 从 JSONL 全量派生 Record，融合进统一 法规.csv（浏览器数据已在文件中作为 base）
+    fused_records = _fuse_jsonl_into_csv(out_jsonl)
+    print(f"已将 JSONL 中 {len(fused_records)} 条 MCP 记录融合进 {MERGED_CSV_PATH}")
     if out_json:
         write_json(out_json, all_records)
 
@@ -1424,16 +1463,18 @@ def run_mcp_backfill(
     keywords: List[str],
     start_month: str,
     points_budget: int,
-    out_csv: Path,
+    out_jsonl: Path,
     out_json: Optional[Path],
     fulltext: bool = False,
     state_path: Path = MCP_BACKFILL_STATE_PATH,
 ) -> None:
     """按积分预算回填漏扫的法规（当月补漏优先，随后 start_month 起的历史月份倒序）。
 
+    原始结果逐段落盘 JSONL，回填结束后统一派生融合进 法规.csv。
     覆盖账本（state 文件，随仓库提交）记录每个 月份×关键词 已确定覆盖的日区间，
     回填只扫未覆盖的补集窗口；每段扫描成功即时入账，断点续扫粒度精确到日区间。
     points_budget=0 表示不限预算，直到积分耗尽（McpUnavailableError 时优雅停止）。"""
+    _migrate_mcp_csv_to_jsonl(MCP_LEGACY_CSV_PATH, out_jsonl)
     token = os.environ.get(MCP_TOKEN_ENV, "").strip()
     if not token:
         print(f"未设置环境变量 {MCP_TOKEN_ENV}（北大法宝 MCP 授权码），请先设置后重试。")
@@ -1526,6 +1567,13 @@ def run_mcp_backfill(
                     stop = True
                     break
 
+                # 原始 items 逐段落盘 JSONL（断点续扫时已落盘数据不丢）
+                write_mcp_jsonl(
+                    out_jsonl,
+                    [_with_mcp_meta(it, kw, "title") for it in title_items]
+                    + [_with_mcp_meta(it, kw, "fulltext") for it in fulltext_items],
+                )
+
                 records = _records_from_mcp_items(title_items + fulltext_items, month_prefix)
                 records = deduplicate_records_by_title(records)
                 # 标题二次过滤只约束标题来源；仅正文命中的记录直接保留
@@ -1538,10 +1586,6 @@ def run_mcp_backfill(
                 title_sourced = filter_records_by_keywords(title_sourced, [kw])
                 records = deduplicate_records_by_title(title_sourced + fulltext_only)
 
-                if records:
-                    write_csv(out_csv, records)
-                    if out_json:
-                        write_json(out_json, records)
                 if truncated:
                     # 预算/上限导致该窗口未扫完：结果已落盘但不记进度，下次触发重扫补全
                     print(f"WARNING: {month_prefix} [{d1}-{d2}] '{kw}' 未扫完，不记进度，留待下次续扫。")
@@ -1567,6 +1611,120 @@ def run_mcp_backfill(
     if stop:
         print("进度已实时保存至状态文件，下次触发将从断点继续。")
 
+    # 回填结束后统一从 JSONL 派生并融合进 法规.csv
+    fused_records = _fuse_jsonl_into_csv(out_jsonl)
+    print(f"已将 JSONL 中 {len(fused_records)} 条 MCP 记录融合进 {MERGED_CSV_PATH}")
+    if out_json:
+        write_json(out_json, fused_records)
+
+
+def _with_mcp_meta(item: dict, keyword: str, search_field: str) -> dict:
+    """给 MCP 原始 item 附加 __meta 检索上下文（retrieved_at 为北京时间）。"""
+    enriched = dict(item)
+    enriched["__meta"] = {
+        "retrieved_at": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
+        "keyword": keyword,
+        "search_field": search_field,
+    }
+    return enriched
+
+
+def _mcp_item_dedup_key(item: dict) -> str:
+    """JSONL 去重键：优先 URL path，否则标题（去全部空白）。"""
+    return url_path_key(_extract_mcp_url(item)) or title_dedup_key(
+        (item.get("Title") or "").strip()
+    )
+
+
+def load_mcp_jsonl(path: Path) -> List[dict]:
+    """逐行读取 JSONL（utf-8），坏行跳过并告警到 stderr。"""
+    items: List[dict] = []
+    if not path.exists():
+        return items
+    with path.open("r", encoding="utf-8") as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:
+                print(f"Warning: {path.name}:{lineno} JSON 解析失败，已跳过: {e}", file=sys.stderr)
+                continue
+            if isinstance(obj, dict):
+                items.append(obj)
+    return items
+
+
+def write_mcp_jsonl(path: Path, new_items: Iterable[dict]) -> None:
+    """把 MCP 原始 item 合并进 JSONL：读旧 → 按 _mcp_item_dedup_key 去重
+    （同 key 新记录覆盖旧记录）→ 整文件重写。无 key 的行追加保留。"""
+    new_items = [it for it in new_items if isinstance(it, dict)]
+    old_items = load_mcp_jsonl(path)
+    if not old_items and not new_items:
+        return
+    merged: dict = {}
+    nokey: List[dict] = []
+    for item in old_items + new_items:
+        key = _mcp_item_dedup_key(item)
+        if key:
+            merged[key] = item
+        else:
+            nokey.append(item)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for item in list(merged.values()) + nokey:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def _migrate_mcp_csv_to_jsonl(csv_path: Path, jsonl_path: Path) -> None:
+    """一次性迁移：若 JSONL 不存在而旧版 法规_mcp.csv 存在，把 CSV 行转成 JSONL 行
+    （MCP 风格字段名 + __meta{"migrated_from": ...}），使派生逻辑统一从 JSONL 出 Record。"""
+    if jsonl_path.exists() or not csv_path.exists():
+        return
+    items: List[dict] = []
+    try:
+        with csv_path.open("r", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                items.append({
+                    "Title": row.get("title", ""),
+                    "Url": row.get("url", ""),
+                    "IssueDate": row.get("publish_date", ""),
+                    "ImplementDate": row.get("effective_date", ""),
+                    "IssueDepartment": [
+                        d for d in (row.get("issuing_authority") or "").split("；") if d
+                    ],
+                    "EffectivenessDic": [
+                        h for h in (row.get("legal_hierarchy") or "").split("；") if h
+                    ],
+                    "Category": row.get("category", ""),
+                    "__meta": {"migrated_from": csv_path.name},
+                })
+    except Exception as e:
+        print(f"Warning: 迁移 {csv_path.name} 到 JSONL 失败: {e}")
+        return
+    write_mcp_jsonl(jsonl_path, items)
+    print(f"已将 {csv_path.name} 的 {len(items)} 条历史记录迁移到 {jsonl_path.name}")
+
+
+def _fuse_jsonl_into_csv(jsonl_path: Path, csv_path: Path = MERGED_CSV_PATH) -> List[Record]:
+    """从 JSONL 全量派生 Record 并融合进统一 CSV，返回派生的记录列表。
+    标题检索来源的记录沿用标题二次过滤（标题须含检索关键词）；
+    仅正文命中的记录与迁移历史记录直接保留。"""
+    records = []
+    for item in load_mcp_jsonl(jsonl_path):
+        meta = item.get("__meta") or {}
+        keyword = (meta.get("keyword") or "").strip()
+        if meta.get("search_field") == "title" and keyword:
+            title = (item.get("Title") or "").strip().lower()
+            if keyword.lower() not in title:
+                continue
+        r = _record_from_mcp_item(item)
+        if r:
+            records.append(r)
+    write_csv(csv_path, records)
+    return records
+
 
 def write_csv(path: Path, rows: Iterable[Record]) -> None:
     # 读取已有数据进行合并（使用双 key：URL path + 标题去全部空白）
@@ -1585,6 +1743,8 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                         issuing_authority=row.get("issuing_authority", ""),
                         legal_hierarchy=row.get("legal_hierarchy", ""),
                         effective_date=row.get("effective_date", ""),
+                        # 兼容旧版 7 列 CSV：缺 source 列默认 browser
+                        source=row.get("source", "") or "browser",
                     )
                     if not (title_dedup_key(r.title) or url_path_key(r.url)):
                         continue
@@ -1621,7 +1781,7 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
             f,
             fieldnames=["category", "title", "url", "publish_date",
                         "issuing_authority", "legal_hierarchy",
-                        "effective_date"],
+                        "effective_date", "source"],
         )
         w.writeheader()
         for r in sorted_records:
@@ -1818,7 +1978,12 @@ async def run(
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="查询法规信息并带交互式过滤")
     ap.add_argument("--keyword", default="智能", help="检索词（默认：智能）")
-    ap.add_argument("--out", default="法规.csv", help="输出 CSV 路径")
+    ap.add_argument(
+        "--out",
+        default=None,
+        help=f"输出路径：browser 模式默认 {MERGED_CSV_PATH}（CSV）；"
+        f"mcp 模式默认 {MCP_JSONL_DEFAULT_PATH}（JSONL 原始数据，派生后融合进 {MERGED_CSV_PATH}）",
+    )
     ap.add_argument("--out-json", default=None, help="输出 JSON 路径（可选）")
     ap.add_argument(
         "--filter-keywords",
@@ -1893,7 +2058,6 @@ def main() -> None:
     if args.headed:
         headless = False
 
-    out_csv = Path(args.out)
     out_json = Path(args.out_json) if args.out_json else None
     user_data_dir = Path(args.user_data_dir) if args.user_data_dir else None
     filter_keywords = (
@@ -1912,6 +2076,7 @@ def main() -> None:
         raise SystemExit(f"--days 应为正整数，收到: {args.days!r}")
 
     if args.enrich_existing:
+        out_csv = Path(args.out) if args.out else MERGED_CSV_PATH
         records = asyncio.run(
             run_enrich_existing(
                 out_csv=out_csv,
@@ -1925,6 +2090,8 @@ def main() -> None:
         return
 
     if args.source == "mcp":
+        # MCP 模式下 --out 语义为 JSONL 原始数据路径，派生记录统一融合进 法规.csv
+        out_jsonl = Path(args.out) if args.out else MCP_JSONL_DEFAULT_PATH
         if args.backfill:
             if not args.start_month or not re.fullmatch(r"\d{4}\.\d{2}", args.start_month):
                 raise SystemExit(
@@ -1937,15 +2104,16 @@ def main() -> None:
                 keywords=keywords,
                 start_month=args.start_month,
                 points_budget=args.points_budget,
-                out_csv=out_csv,
+                out_jsonl=out_jsonl,
                 out_json=out_json,
                 fulltext=args.fulltext,
             )
-            print(f"完成。CSV文件: {out_csv.resolve()}")
+            print(f"完成。JSONL文件: {out_jsonl.resolve()}")
+            print(f"CSV文件: {MERGED_CSV_PATH.resolve()}")
             return
         records = run_mcp(
             keyword=args.keyword,
-            out_csv=out_csv,
+            out_jsonl=out_jsonl,
             out_json=out_json,
             max_items=args.max_items,
             filter_keywords=filter_keywords,
@@ -1953,7 +2121,11 @@ def main() -> None:
             fulltext=args.fulltext,
             days=args.days,
         )
+        print(f"完成。总记录数: {len(records)}")
+        print(f"JSONL文件: {out_jsonl.resolve()}")
+        print(f"CSV文件: {MERGED_CSV_PATH.resolve()}")
     else:
+        out_csv = Path(args.out) if args.out else MERGED_CSV_PATH
         records = asyncio.run(
             run(
                 keyword=args.keyword,
@@ -1967,9 +2139,8 @@ def main() -> None:
                 month=month,
             )
         )
-
-    print(f"完成。总记录数: {len(records)}")
-    print(f"CSV文件: {out_csv.resolve()}")
+        print(f"完成。总记录数: {len(records)}")
+        print(f"CSV文件: {out_csv.resolve()}")
     if out_json:
         print(f"JSON文件: {out_json.resolve()}")
 

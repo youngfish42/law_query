@@ -89,7 +89,7 @@ jobs:
                 #   2 = 积分不足/授权问题（确定性），本日剩余关键词全部改走浏览器
                 #   1 = 瞬时故障，仅本关键词回退浏览器，后续关键词仍尝试 MCP
                 rc=0
-                python query.py --source mcp --keyword "$KW" --out "法规_mcp.csv" $DAYS_FLAG || rc=$?
+                python query.py --source mcp --keyword "$KW" --out "法规_mcp.jsonl" $DAYS_FLAG || rc=$?
                 if [ $rc -eq 2 ]; then
                   echo "::warning::MCP 当日不可用（积分不足或授权问题），剩余关键词改用浏览器抓取"
                   MCP_AVAILABLE=false
@@ -118,8 +118,8 @@ jobs:
           git config --local user.email "youngfish42@users.noreply.github.com"
           git config --local user.name "youngfish42"
           git add 法规.csv meta.json feed.xml
-          # MCP 独立输出文件与覆盖账本（browser 模式或未跑 MCP 时可能不存在）
-          if [ -f "法规_mcp.csv" ]; then git add "法规_mcp.csv"; fi
+          # MCP 原始 JSONL 输出与覆盖账本（browser 模式或未跑 MCP 时可能不存在）
+          if [ -f "法规_mcp.jsonl" ]; then git add "法规_mcp.jsonl"; fi
           if [ -f "mcp_backfill_state.json" ]; then git add "mcp_backfill_state.json"; fi
           
           # Check for staged changes
@@ -136,6 +136,6 @@ jobs:
           name: query-results
           path: |
             法规.csv
-            法规_mcp.csv
+            法规_mcp.jsonl
             meta.json
             feed.xml

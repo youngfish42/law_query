@@ -97,6 +97,7 @@ def build_feed(records: list[dict], last_updated: datetime) -> ET.Element:
         hierarchy = row.get("legal_hierarchy") or ""
         publish_date_str = row.get("publish_date") or ""
         effective_date_str = row.get("effective_date") or ""
+        source = (row.get("source") or "").strip().lower()
 
         title = row["title"]
         url = row["url"]
@@ -113,6 +114,8 @@ def build_feed(records: list[dict], last_updated: datetime) -> ET.Element:
             desc_parts.append(f"制定机关：{authority}")
         if hierarchy:
             desc_parts.append(f"效力位阶：{hierarchy}")
+        if source:
+            desc_parts.append(f"来源：{'MCP' if source == 'mcp' else '浏览器'}")
         description = "；".join(desc_parts) if desc_parts else title
 
         ET.SubElement(item, "title").text = title

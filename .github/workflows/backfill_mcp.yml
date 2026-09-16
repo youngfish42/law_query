@@ -57,13 +57,14 @@ jobs:
             --start-month "${{ inputs.start_month }}" \
             --points-budget "${{ inputs.points_budget }}" \
             --keyword "$KEYWORDS" \
-            --out "法规_mcp.csv" $FULLTEXT_FLAG
+            --out "法规_mcp.jsonl" $FULLTEXT_FLAG
 
       - name: Commit and push changes
         run: |
           git config --local user.email "youngfish42@users.noreply.github.com"
           git config --local user.name "youngfish42"
-          if [ -f "法规_mcp.csv" ]; then git add "法规_mcp.csv"; fi
+          if [ -f "法规_mcp.jsonl" ]; then git add "法规_mcp.jsonl"; fi
+          if [ -f "法规.csv" ]; then git add "法规.csv"; fi
           if [ -f "mcp_backfill_state.json" ]; then git add "mcp_backfill_state.json"; fi
 
           # Check for staged changes
