@@ -59,6 +59,9 @@ jobs:
             --keyword "$KEYWORDS" \
             --out "法规_mcp.jsonl" $FULLTEXT_FLAG
 
+      - name: Generate RSS feed
+        run: python generate_rss.py
+
       - name: Commit and push changes
         run: |
           git config --local user.email "youngfish42@users.noreply.github.com"
@@ -66,6 +69,7 @@ jobs:
           if [ -f "法规_mcp.jsonl" ]; then git add "法规_mcp.jsonl"; fi
           if [ -f "法规.csv" ]; then git add "法规.csv"; fi
           if [ -f "mcp_backfill_state.json" ]; then git add "mcp_backfill_state.json"; fi
+          if [ -f "feed.xml" ]; then git add "feed.xml"; fi
 
           # Check for staged changes
           if git diff --staged --quiet; then

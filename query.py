@@ -1266,7 +1266,7 @@ def run_mcp(
     均由 _mcp_search_month 做自适应日期窗拆分，规避服务端 20 条上限。
     days（--days）启用增量模式：仅检索最近 N 天（月初自动跨入上月尾部），
     供每日任务节省积分；指定 --month 时忽略 days，始终整月检索。"""
-    _migrate_mcp_csv_to_jsonl(MCP_LEGACY_CSV_PATH, out_jsonl)
+    _migrate_mcp_csv_to_jsonl(MCP_LEGACY_CSV_PATH, MCP_JSONL_DEFAULT_PATH)
     token = os.environ.get(MCP_TOKEN_ENV, "").strip()
     if not token:
         print(f"未设置环境变量 {MCP_TOKEN_ENV}（北大法宝 MCP 授权码），请先设置后重试。")
@@ -1474,7 +1474,7 @@ def run_mcp_backfill(
     覆盖账本（state 文件，随仓库提交）记录每个 月份×关键词 已确定覆盖的日区间，
     回填只扫未覆盖的补集窗口；每段扫描成功即时入账，断点续扫粒度精确到日区间。
     points_budget=0 表示不限预算，直到积分耗尽（McpUnavailableError 时优雅停止）。"""
-    _migrate_mcp_csv_to_jsonl(MCP_LEGACY_CSV_PATH, out_jsonl)
+    _migrate_mcp_csv_to_jsonl(MCP_LEGACY_CSV_PATH, MCP_JSONL_DEFAULT_PATH)
     token = os.environ.get(MCP_TOKEN_ENV, "").strip()
     if not token:
         print(f"未设置环境变量 {MCP_TOKEN_ENV}（北大法宝 MCP 授权码），请先设置后重试。")
@@ -1656,25 +1656,72 @@ def load_mcp_jsonl(path: Path) -> List[dict]:
     return items
 
 
+def _merge_mcp_meta(old: Optional[dict], new: Optional[dict]) -> dict:
+    """合并同一条目多次检索的 __meta：新 meta 覆盖同名键，但检索关键词累积进
+    keywords 列表（融合时的标题过滤任一命中即保留），且一旦有过 title 命中
+    就固定 search_field="title"（标题命中是更强的相关性证据，不被后续
+    fulltext 命中覆盖）。"""
+    old = old or {}
+    new = new or {}
+    merged = {**old, **new}
+    keywords: List[str] = []
+    for meta in (old, new):
+        for kw in (meta.get("keywords") or []):
+            if kw and kw not in keywords:
+                keywords.append(kw)
+        kw = (meta.get("keyword") or "").strip()
+        if kw and kw not in keywords:
+            keywords.append(kw)
+    if keywords:
+        merged["keywords"] = keywords
+    fields = [m.get("search_field") for m in (old, new)]
+    if "title" in fields:
+        merged["search_field"] = "title"
+    return merged
+
+
 def write_mcp_jsonl(path: Path, new_items: Iterable[dict]) -> None:
     """把 MCP 原始 item 合并进 JSONL：读旧 → 按 _mcp_item_dedup_key 去重
-    （同 key 新记录覆盖旧记录）→ 整文件重写。无 key 的行追加保留。"""
+    （同 key 新记录覆盖旧记录，__meta 经 _merge_mcp_meta 合并）→ 整文件重写。
+    无 key 的行追加保留。写入经临时文件 + os.replace 原子替换，避免中断截断数据。"""
     new_items = [it for it in new_items if isinstance(it, dict)]
     old_items = load_mcp_jsonl(path)
     if not old_items and not new_items:
         return
+    # 防误伤：已存在文件的首个非空行不是合法 JSON（如误把 CSV 路径当 --out 传入）
+    # 时拒绝覆写——load_mcp_jsonl 会静默跳过坏行，不能据此判断文件为空。
+    if path.exists() and path.stat().st_size > 0:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    first = json.loads(line)
+                except json.JSONDecodeError:
+                    first = None
+                if not isinstance(first, dict):
+                    raise SystemExit(
+                        f"ERROR: {path} 已存在且不是 JSONL 格式（--out 是否误传了 CSV 路径？），拒绝覆写。"
+                    )
+                break
     merged: dict = {}
     nokey: List[dict] = []
     for item in old_items + new_items:
         key = _mcp_item_dedup_key(item)
         if key:
+            if key in merged:
+                item = dict(item)
+                item["__meta"] = _merge_mcp_meta(merged[key].get("__meta"), item.get("__meta"))
             merged[key] = item
         else:
             nokey.append(item)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    tmp_path = path.with_name(path.name + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
         for item in list(merged.values()) + nokey:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
+    os.replace(tmp_path, path)
 
 
 def _migrate_mcp_csv_to_jsonl(csv_path: Path, jsonl_path: Path) -> None:
@@ -1709,15 +1756,17 @@ def _migrate_mcp_csv_to_jsonl(csv_path: Path, jsonl_path: Path) -> None:
 
 def _fuse_jsonl_into_csv(jsonl_path: Path, csv_path: Path = MERGED_CSV_PATH) -> List[Record]:
     """从 JSONL 全量派生 Record 并融合进统一 CSV，返回派生的记录列表。
-    标题检索来源的记录沿用标题二次过滤（标题须含检索关键词）；
+    标题检索来源的记录沿用标题二次过滤（标题须含任一历史检索关键词）；
     仅正文命中的记录与迁移历史记录直接保留。"""
     records = []
     for item in load_mcp_jsonl(jsonl_path):
         meta = item.get("__meta") or {}
-        keyword = (meta.get("keyword") or "").strip()
-        if meta.get("search_field") == "title" and keyword:
+        if meta.get("search_field") == "title":
+            keywords = meta.get("keywords") or []
+            if not keywords and meta.get("keyword"):
+                keywords = [meta["keyword"]]
             title = (item.get("Title") or "").strip().lower()
-            if keyword.lower() not in title:
+            if keywords and not any(kw.strip().lower() in title for kw in keywords):
                 continue
         r = _record_from_mcp_item(item)
         if r:
@@ -2048,6 +2097,12 @@ def parse_args() -> argparse.Namespace:
         help="仅 --source mcp 有效：仅检索最近 N 天（按施行日期，向后覆盖至当月月末，"
         "月初自动跨入上月尾部），用于每日增量扫描以节省积分；默认整月",
     )
+    ap.add_argument(
+        "--fuse-only",
+        action="store_true",
+        help="仅 --source mcp 有效：不发起检索，只做旧 CSV 一次性迁移 + 把 JSONL "
+        "全量融合进 法规.csv（用于从 JSONL 真相来源重建统一数据集）",
+    )
 
     return ap.parse_args()
 
@@ -2092,6 +2147,20 @@ def main() -> None:
     if args.source == "mcp":
         # MCP 模式下 --out 语义为 JSONL 原始数据路径，派生记录统一融合进 法规.csv
         out_jsonl = Path(args.out) if args.out else MCP_JSONL_DEFAULT_PATH
+        if out_jsonl.suffix.lower() == ".csv" or out_jsonl.resolve() in (
+            MERGED_CSV_PATH.resolve(),
+            MCP_LEGACY_CSV_PATH.resolve(),
+        ):
+            raise SystemExit(
+                f"MCP 模式下 --out 应为 JSONL 路径（默认 {MCP_JSONL_DEFAULT_PATH}），"
+                f"收到: {out_jsonl}（传 CSV 路径会销毁其中的数据）"
+            )
+        if args.fuse_only:
+            # 只做一次性迁移 + 融合（JSONL 是真相来源，法规.csv 可随时由此重建）
+            _migrate_mcp_csv_to_jsonl(MCP_LEGACY_CSV_PATH, MCP_JSONL_DEFAULT_PATH)
+            fused = _fuse_jsonl_into_csv(out_jsonl)
+            print(f"已融合 {len(fused)} 条 MCP 记录到 {MERGED_CSV_PATH.resolve()}")
+            return
         if args.backfill:
             if not args.start_month or not re.fullmatch(r"\d{4}\.\d{2}", args.start_month):
                 raise SystemExit(

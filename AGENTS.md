@@ -28,7 +28,7 @@ law_scraper/
 ├── index.html                        # GitHub Pages 静态展示页
 ├── 法规.csv                          # 浏览器+MCP 融合后的统一数据集（持久化数据，按标题去重）
 ├── 法规_mcp.jsonl                    # MCP 途径原始抓取结果（每行一个 JSON：原始 item 全字段 + __meta）
-├── mcp_backfill_state.json           # MCP 回填进度（已完成的 月份|关键词 组合）
+├── mcp_backfill_state.json           # MCP 覆盖账本（v2：月份×关键词 已确定覆盖的日区间）
 ├── feed.xml                          # 生成的 RSS 2.0
 ├── meta.json                         # 最近更新时间（北京时间）
 ├── requirements.txt
@@ -53,7 +53,9 @@ law_scraper/
 `meta.json` 形如 `{"updated_at": "2026-06-12 08:00"}`（北京时间）。
 
 `法规_mcp.jsonl` 每行一个 JSON 对象：MCP 原始 item 的全部字段，
-外加 `__meta` 子对象（`retrieved_at` / `keyword` / `search_field`）记录检索上下文。
+外加 `__meta` 子对象（`retrieved_at` / `keyword` / `search_field`，多次检索的关键词
+累积进 `keywords` 列表）记录检索上下文。JSONL 是 MCP 数据的**真相来源**，
+`法规.csv` 可随时用 `--fuse-only` 从中重建（写入经临时文件原子替换）。
 派生 Record（写入 `法规.csv`）时，`IssueDepartment` 全量以 `；` 连接为 `issuing_authority`。
 MCP 抓取完成后自动融合进 `法规.csv`（浏览器 + MCP 双渠道融合，网页 / RSS 只读 `法规.csv`）。
 MCP 服务仅覆盖中央 / 地方法规库，单次检索上限 20 条且不支持翻页，
@@ -87,6 +89,9 @@ python query.py --source mcp --keyword 智能 --days 5 --out "法规_mcp.jsonl"
 # MCP 历史回填：优先补当月缺漏，再倒序补 start-month 起的历史月份（只扫未覆盖的日期窗口）
 python query.py --source mcp --backfill --start-month 2025.01 --keyword "智能,算力" --out "法规_mcp.jsonl"
 
+# 不检索，仅从 JSONL 重建融合 法规.csv（含旧 CSV 一次性迁移）
+python query.py --source mcp --fuse-only
+
 # 抓取并输出 JSON
 python query.py --keyword 智能 --out 法规.csv --out-json results.json
 
@@ -112,7 +117,7 @@ CI 默认依次抓取的关键词列表（位于 workflow 中）：
 - **注释**：保持现有简洁风格；除非用户明确要求，不要新增大段注释或文档字符串。
 - **请勿格式化整个文件**：避免无关 diff，仅修改必要的行。
 - **抓取礼貌性**：调整爬取节奏时，请保留或调大 `DETAIL_PAGE_DELAY_MS`（默认 1000ms），不要使站点负载激增。
-- **类别归一化**：所有写入 CSV 的 `category` 必须经过 `normalize_category()` 处理；新增类别时同步更新 `CATEGORY_NAME_MAP`（`query.py` 与 `generate_rss.py` 两处）。
+- **类别归一化**：所有写入 CSV 的 `category` 必须经过 `normalize_category()` 处理；新增类别时同步更新 `CATEGORY_NAME_MAP`（`query.py`；`generate_rss.py` 直接使用 CSV 中的中文类别，无映射表）。
 - **去重**：以 `normalize_title(title)` 作为唯一键；合并逻辑见 `merge_record_fields()`，新字段需在此函数中决定合并策略。
 
 ## 7. 测试与验证
@@ -132,7 +137,7 @@ CI 默认依次抓取的关键词列表（位于 workflow 中）：
 - MCP 退出码约定：`0` 成功；`2` MCP 当日不可用（401/403/429 或 token 缺失，确定性错误，当日重试无意义）；`1` 瞬时故障。每日任务据此 fail-fast：命中退出码 2 时剩余关键词全部改走浏览器，不再逐个无效尝试。
 - Workflow 会 `git add 法规.csv 法规_mcp.jsonl mcp_backfill_state.json meta.json feed.xml` 并自动 commit & push，**请不要**让脚本写入其他需要提交的文件，除非同步更新 workflow。
 - 修改 workflow 里的自动提交步骤时，注意保留其中已配置的 `git config user.email / user.name`，不要随意替换 bot 身份。
-- `backfill_mcp.yml` 为**仅手动触发**的 MCP 历史回填 Action：用户在签到领取积分（约 10000 分/日）后触发，优先补当月缺漏、再倒序回填 `start_month` 起的历史月份（回填同样会融合更新 `法规.csv`）；`points_budget` 默认 `0`=不限（持续到积分耗尽，进度实时保存、下次续扫）。
+- `backfill_mcp.yml` 为**仅手动触发**的 MCP 历史回填 Action：用户在签到领取积分（约 10000 分/日）后触发，优先补当月缺漏、再倒序回填 `start_month` 起的历史月份（回填同样会融合更新 `法规.csv`，并重新生成 `feed.xml`）；`points_budget` 默认 `0`=不限（持续到积分耗尽，进度实时保存、下次续扫）。
 - 覆盖账本 `mcp_backfill_state.json`（v2，随仓库提交）记录每个 月份×关键词 已**确定覆盖**的日区间：日期 D 被覆盖 = 存在一次在 D 当日或之后执行且窗口包含 D 的成功扫描；每次 MCP 检索（含每日任务与手动 `--month`）成功后自动入账，回填只扫未覆盖的补集窗口。
 
 ## 9. 协作准则（给 AI 的硬性约束）
