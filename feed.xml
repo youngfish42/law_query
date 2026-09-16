@@ -5,9 +5,25 @@
     <link>https://youngfish42.github.io/law_query/</link>
     <description>AI、数智化、大模型等相关法规的最新更新订阅</description>
     <language>zh-CN</language>
-    <lastBuildDate>Tue, 15 Sep 2026 02:01:00 +0800</lastBuildDate>
+    <lastBuildDate>Wed, 16 Sep 2026 08:43:00 +0800</lastBuildDate>
     <ttl>1440</ttl>
     <atom:link href="https://youngfish42.github.io/law_query/feed.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>《人工智能安全治理框架3.0》发布</title>
+      <link>https://www.pkulaw.com/news/529d2bc25594c3b7bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
+      <description>分类：法律动态；公布日期：2026.09.15；制定机关：全国网络安全标准化技术委员会</description>
+      <guid isPermaLink="true">https://www.pkulaw.com/news/529d2bc25594c3b7bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
+      <category>法律动态</category>
+      <pubDate>Tue, 15 Sep 2026 00:00:00 +0800</pubDate>
+    </item>
+    <item>
+      <title>APEC人工智能高级别论坛关于促进亚太地区人工智能发展的声明</title>
+      <link>https://www.pkulaw.com/news/6fa26e7180a34776bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
+      <description>分类：法律动态；公布日期：2026.09.15；制定机关：中国网信网</description>
+      <guid isPermaLink="true">https://www.pkulaw.com/news/6fa26e7180a34776bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
+      <category>法律动态</category>
+      <pubDate>Tue, 15 Sep 2026 00:00:00 +0800</pubDate>
+    </item>
     <item>
       <title>智能网联新能源汽车产业发展“十五五”规划</title>
       <link>https://www.pkulaw.com/news/e30a99e7e0b0a087bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
@@ -131,7 +147,7 @@
     <item>
       <title>住房城乡建设部办公厅关于行业标准《城镇排水工程电气与智能化系统技术标准(修订征求意见稿)》公开征求意见的通知</title>
       <link>https://www.pkulaw.com/protocol/213f4ab02e82412790ca799ba65a328bbdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
-      <description>分类：立法资料；公布日期：2026.09.01</description>
+      <description>分类：立法资料；公布日期：2026.09.01；制定机关：住房和城乡建设部；效力位阶：部门工作文件</description>
       <guid isPermaLink="true">https://www.pkulaw.com/protocol/213f4ab02e82412790ca799ba65a328bbdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
       <category>立法资料</category>
       <pubDate>Tue, 01 Sep 2026 00:00:00 +0800</pubDate>
@@ -791,22 +807,6 @@
       <guid isPermaLink="true">https://www.pkulaw.com/protocol/b21c343dc96e3655d5cc64dc7b9d7f17bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
       <category>立法资料</category>
       <pubDate>Fri, 01 May 2026 00:00:00 +0800</pubDate>
-    </item>
-    <item>
-      <title>杭州法院发布人工智能企业与从业人员权益保护典型案例</title>
-      <link>https://www.pkulaw.com/news/1d8d1718472e278fbdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
-      <description>分类：法律动态；公布日期：2026.04.29；制定机关：杭州法院</description>
-      <guid isPermaLink="true">https://www.pkulaw.com/news/1d8d1718472e278fbdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
-      <category>法律动态</category>
-      <pubDate>Wed, 29 Apr 2026 00:00:00 +0800</pubDate>
-    </item>
-    <item>
-      <title>黑龙江省工业和信息化厅、黑龙江省财政厅关于印发《黑龙江省算力券管理办法(试行)》的通知</title>
-      <link>https://www.pkulaw.com/lar/5c86b1b841b3ef88b9c0603be29e9a67bdfb.html?keyword=%E7%AE%97%E5%8A%9B&amp;way=listView</link>
-      <description>分类：地方法规；公布日期：2026.04.23；制定机关：黑龙江省工业和信息化厅；效力位阶：地方规范性文件</description>
-      <guid isPermaLink="true">https://www.pkulaw.com/lar/5c86b1b841b3ef88b9c0603be29e9a67bdfb.html?keyword=%E7%AE%97%E5%8A%9B&amp;way=listView</guid>
-      <category>地方法规</category>
-      <pubDate>Thu, 23 Apr 2026 00:00:00 +0800</pubDate>
     </item>
   </channel>
 </rss>
