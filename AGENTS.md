@@ -48,7 +48,7 @@ law_scraper/
 | `issuing_authority` | 制定机关 | 国务院 |
 | `legal_hierarchy` | 效力位阶 | 行政法规 |
 | `effective_date` | `YYYY.MM.DD` 或 `YYYY.MM`（施行日期） | 2026.07.01 |
-| `source` | 数据来源（browser / mcp） | mcp |
+| `source` | 数据来源（browser / mcp），仅用于落盘存储，**不用于**网页 / RSS 展示 | mcp |
 
 `meta.json` 形如 `{"updated_at": "2026-06-12 08:00"}`（北京时间）。
 
