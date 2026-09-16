@@ -12,14 +12,6 @@ from pathlib import Path
 # Number of most-recent items to include in the feed
 MAX_FEED_ITEMS = 100
 
-CATEGORY_NAME_MAP = {
-    "central": "中央法规",
-    "local": "地方法规",
-    "legislative_materials": "立法资料",
-    "legislative_interpretations": "法规解读",
-    "legal_updates": "法律动态",
-}
-
 SITE_URL = "https://youngfish42.github.io/law_query/"
 FEED_PATH = Path("feed.xml")
 CSV_PATH = Path("法规.csv")
@@ -91,8 +83,7 @@ def build_feed(records: list[dict], last_updated: datetime) -> ET.Element:
     for row in records:
         item = ET.SubElement(channel, "item")
 
-        category_key = (row.get("category") or "").lower()
-        category_text = CATEGORY_NAME_MAP.get(category_key, row.get("category") or "")
+        category_text = row.get("category") or ""
         authority = row.get("issuing_authority") or ""
         hierarchy = row.get("legal_hierarchy") or ""
         publish_date_str = row.get("publish_date") or ""

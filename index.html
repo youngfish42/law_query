@@ -7,40 +7,53 @@
     <link rel="alternate" type="application/rss+xml" title="AI法规库 RSS订阅" href="feed.xml">
     <style>
         :root {
+            color-scheme: light;
             --primary-color: #007bff;
             --hover-color: #0056b3;
             --bg-color: #f8f9fa;
             --border-color: #dee2e6;
+            --border-strong: #dae0e5;
+            --card-bg: #ffffff;
+            --text-color: #333333;
+            --text-secondary: #495057;
+            --heading-color: #2c3e50;
+            --muted-color: #6c757d;
+            --header-bg: #f1f3f5;
+            --header-hover-bg: #e9ecef;
+            --row-hover-bg: #f8f9fa;
+            --detail-bg: #f8f9fa;
+            --disabled-color: #adb5bd;
+            --disabled-bg: #f8f9fa;
         }
 
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
-            margin: 0; 
-            padding: 20px; 
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
             background-color: var(--bg-color);
-            color: #333;
+            color: var(--text-color);
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            background: white;
+            background: var(--card-bg);
             padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
 
-        h1 { 
-            text-align: center; 
+        h1 {
+            text-align: center;
             margin-bottom: 10px;
-            color: #2c3e50;
+            color: var(--heading-color);
         }
 
-        .timestamp { 
-            text-align: center; 
-            color: #6c757d; 
-            font-size: 0.9em; 
-            margin-bottom: 20px; 
+        .timestamp {
+            text-align: center;
+            color: var(--muted-color);
+            font-size: 0.9em;
+            margin-bottom: 20px;
         }
 
         /* Controls Section */
@@ -67,7 +80,9 @@
             border: 1px solid var(--border-color);
             border-radius: 4px;
             font-size: 14px;
-            box-sizing: border-box; 
+            box-sizing: border-box;
+            background: var(--card-bg);
+            color: var(--text-color);
         }
 
         .search-icon {
@@ -81,7 +96,7 @@
 
         .stats {
             font-size: 0.9em;
-            color: #666;
+            color: var(--muted-color);
         }
 
         /* Table Styles */
@@ -89,6 +104,8 @@
             overflow-x: auto;
             border: 1px solid var(--border-color);
             border-radius: 4px;
+            /* 翻页 scrollIntoView 时不被 sticky 工具栏遮挡（略大于工具栏高度） */
+            scroll-margin-top: 150px;
         }
 
         table { 
@@ -97,14 +114,15 @@
             min-width: 600px;
         }
 
-        th, td { 
-            padding: 12px 15px; 
-            text-align: left; 
-            border-bottom: 1px solid var(--border-color); 
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+            line-height: 1.45;
         }
 
-        th { 
-            background-color: #f1f3f5; 
+        th {
+            background-color: var(--header-bg);
             font-weight: 600;
             cursor: pointer;
             user-select: none;
@@ -115,7 +133,7 @@
         }
 
         th:hover {
-            background-color: #e9ecef;
+            background-color: var(--header-hover-bg);
         }
 
         th::after {
@@ -139,9 +157,22 @@
             color: var(--primary-color);
         }
 
-        tr:hover { 
-            background-color: #f8f9fa; 
+        tr:hover {
+            background-color: var(--row-hover-bg);
         }
+
+        tbody tr.data-row {
+            cursor: pointer;
+            transition: background-color 0.15s ease;
+        }
+        tbody tr.data-row td.cell-title::before {
+            content: '▸';
+            float: right;
+            margin: 2px 0 0 8px;
+            color: var(--muted-color);
+            transition: transform 0.15s;
+        }
+        tbody tr.data-row.expanded td.cell-title::before { transform: rotate(90deg); }
 
         /* Column Specifics */
         .col-category { width: 80px; }
@@ -149,11 +180,26 @@
         .col-authority { width: 140px; }
         .col-hierarchy { width: 120px; }
 
-        a { 
-            text-decoration: none; 
-            color: #2c3e50; 
+        a {
+            text-decoration: none;
+            color: var(--heading-color);
             font-weight: 500;
             display: block;
+        }
+
+        td.cell-title a,
+        td.cell-title .title-plain {
+            display: inline;
+            line-height: 1.5;
+        }
+        td.cell-title .title-plain {
+            color: var(--heading-color);
+            font-weight: 500;
+        }
+        td.cell-title a:visited { color: var(--muted-color); }
+        tbody tr.data-row:focus-visible {
+            outline: 2px solid var(--primary-color);
+            outline-offset: -2px;
         }
 
         a:hover { 
@@ -171,10 +217,11 @@
             flex-wrap: wrap;
         }
 
-        .pagination button { 
-            padding: 8px 12px; 
+        .pagination button {
+            padding: 8px 12px;
             border: 1px solid var(--border-color);
-            background: white;
+            background: var(--card-bg);
+            color: var(--text-color);
             border-radius: 4px;
             cursor: pointer;
             transition: all 0.2s;
@@ -182,29 +229,53 @@
         }
 
         .pagination button:hover:not(:disabled) {
-            background-color: #e9ecef;
-            border-color: #dae0e5;
+            background-color: var(--header-hover-bg);
+            border-color: var(--border-strong);
         }
 
-        .pagination button:disabled { 
-            color: #adb5bd; 
-            cursor: not-allowed; 
-            background-color: #f8f9fa;
+        .pagination button:disabled {
+            color: var(--disabled-color);
+            cursor: not-allowed;
+            background-color: var(--disabled-bg);
         }
 
         .pagination span {
             margin: 0 10px;
             font-size: 0.9em;
-            color: #495057;
+            color: var(--text-secondary);
         }
 
-        /* Loading */
+        /* Loading / Error */
         #loading {
             text-align: center;
             padding: 40px;
             font-size: 1.2em;
-            color: #666;
+            color: var(--muted-color);
         }
+
+        .spinner {
+            width: 28px;
+            height: 28px;
+            margin: 0 auto 14px;
+            border: 3px solid var(--border-color);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .error-box .error-text { margin-bottom: 14px; }
+        .retry-btn {
+            padding: 8px 20px;
+            border: 1px solid var(--primary-color);
+            background: var(--primary-color);
+            color: #fff;
+            border-radius: 4px;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .retry-btn:hover { background: var(--hover-color); }
 
         /* RSS Button */
         .rss-btn {
@@ -245,6 +316,87 @@
         .badge-legislative_interpretations { background: #ede9fe; color: #6d28d9; }
         .badge-legal_updates        { background: #fce7f3; color: #be185d; }
         .badge-default              { background: #f1f5f9; color: #475569; }
+        .badge-new                  { background: #fee2e2; color: #b91c1c; margin-left: 6px; }
+
+        /* Search keyword highlight */
+        mark {
+            background: #fff3bf;
+            color: inherit;
+            padding: 0 1px;
+            border-radius: 2px;
+        }
+
+        /* Sticky toolbar: search + filters stay visible while scrolling */
+        .toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            background: var(--card-bg);
+            margin: -20px -20px 0;
+            padding: 20px 20px 12px;
+            border-radius: 8px 8px 0 0;
+            box-shadow: 0 6px 8px -6px rgba(0,0,0,0.15);
+        }
+        .toolbar .filter-chips { margin-bottom: 0; }
+
+        /* Filter chips */
+        .filter-chips {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        .chip-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        .chip {
+            padding: 5px 14px;
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            background: var(--card-bg);
+            color: var(--text-secondary);
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .chip:hover {
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }
+        .chip.active {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+            color: #fff;
+            font-weight: 600;
+        }
+
+        /* Row detail expansion */
+        tbody tr.detail-row:hover { background-color: var(--detail-bg); }
+        .detail-row td {
+            background: var(--detail-bg);
+            padding: 14px 18px;
+        }
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px 28px;
+        }
+        .detail-item {
+            display: flex;
+            gap: 8px;
+            align-items: baseline;
+            font-size: 0.9em;
+        }
+        .detail-label {
+            font-weight: 600;
+            color: var(--muted-color);
+            font-size: 0.88em;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
 
         /* Clear button inside search box */
         .search-clear {
@@ -256,12 +408,12 @@
             border: none;
             cursor: pointer;
             font-size: 16px;
-            color: #adb5bd;
+            color: var(--disabled-color);
             line-height: 1;
             padding: 0;
             display: none;
         }
-        .search-clear:hover { color: #495057; }
+        .search-clear:hover { color: var(--text-secondary); }
         .search-box-container input { padding-right: 36px; }
 
         /* Page jump input */
@@ -270,7 +422,7 @@
             align-items: center;
             gap: 4px;
             font-size: 0.85em;
-            color: #495057;
+            color: var(--text-secondary);
         }
         .page-jump input {
             width: 48px;
@@ -279,17 +431,20 @@
             border-radius: 4px;
             text-align: center;
             font-size: 0.9em;
+            background: var(--card-bg);
+            color: var(--text-color);
         }
         .page-jump button {
             padding: 6px 10px;
             border: 1px solid var(--border-color);
-            background: white;
+            background: var(--card-bg);
+            color: var(--text-color);
             border-radius: 4px;
             cursor: pointer;
             font-size: 0.9em;
             transition: background-color 0.2s;
         }
-        .page-jump button:hover { background-color: #e9ecef; }
+        .page-jump button:hover { background-color: var(--header-hover-bg); }
 
         /* Back-to-top button */
         #backToTop {
@@ -337,12 +492,16 @@
                 border: 1px solid var(--border-color);
                 border-radius: 4px;
                 font-size: 14px;
-                background-color: white;
-                color: #333;
+                background-color: var(--card-bg);
+                color: var(--text-color);
             }
 
+            /* Chips: allow comfortable wrapping on small screens */
+            .filter-chips { gap: 6px; margin-bottom: 12px; }
+            .chip { padding: 6px 12px; font-size: 0.82em; }
+
             /* Hide the table header on mobile */
-            .table-responsive { border: none; }
+            .table-responsive { border: none; scroll-margin-top: 250px; }
             table { min-width: unset; }
             table thead { display: none; }
 
@@ -353,11 +512,29 @@
                 border: 1px solid var(--border-color);
                 border-radius: 8px;
                 padding: 12px 14px;
-                background: white;
+                background: var(--card-bg);
                 box-shadow: 0 1px 3px rgba(0,0,0,0.06);
             }
             table tbody tr:last-child { margin-bottom: 0; }
-            table tbody tr:hover { background-color: #f0f4ff; }
+            table tbody tr:hover { background-color: var(--row-hover-bg); }
+
+            /* Detail row: attach visually to the card above */
+            table tbody tr.detail-row {
+                margin-top: -10px;
+                border-top: none;
+                border-radius: 0 0 8px 8px;
+                background: var(--detail-bg);
+            }
+            table tbody tr.detail-row:hover { background: var(--detail-bg); }
+            table tbody tr.detail-row > td {
+                display: block;
+                padding: 0;
+                background: none;
+            }
+            table tbody tr.detail-row .detail-grid {
+                grid-template-columns: 1fr;
+                gap: 6px;
+            }
 
             /* Empty state row: override card styles */
             table tbody tr.empty-row {
@@ -393,6 +570,13 @@
                 width: auto;
             }
 
+            /* Sticky toolbar tracks container padding on mobile */
+            .toolbar {
+                margin: -12px -12px 0;
+                padding: 12px 12px 10px;
+                border-radius: 6px 6px 0 0;
+            }
+
             /* Right-align value text so wrapping looks correct */
             table tbody td > span:not(.cell-label) {
                 text-align: right;
@@ -402,7 +586,7 @@
             .cell-label {
                 display: inline-block;
                 font-weight: 600;
-                color: #6c757d;
+                color: var(--muted-color);
                 font-size: 0.85em;
                 white-space: nowrap;
                 flex-shrink: 0;
@@ -413,7 +597,7 @@
             table tbody td.cell-title {
                 display: block;
                 padding-bottom: 8px;
-                border-bottom: 1px solid #eee;
+                border-bottom: 1px solid var(--border-color);
                 margin-bottom: 6px;
             }
             table tbody td.cell-title a {
@@ -444,6 +628,49 @@
         @media (min-width: 480px) and (max-width: 768px) {
             .page-jump { display: flex; }
         }
+
+        /* Dark mode */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                color-scheme: dark;
+                --primary-color: #4d9fff;
+                --hover-color: #79b4ff;
+                --bg-color: #15181c;
+                --border-color: #3a3f45;
+                --border-strong: #4a5058;
+                --card-bg: #1f2329;
+                --text-color: #e2e6ea;
+                --text-secondary: #b8bec5;
+                --heading-color: #e8ecf1;
+                --muted-color: #9aa1a9;
+                --header-bg: #262b32;
+                --header-hover-bg: #2f353d;
+                --row-hover-bg: #262b32;
+                --detail-bg: #23282f;
+                --disabled-color: #6b7280;
+                --disabled-bg: #23282f;
+            }
+
+            .container { box-shadow: 0 2px 4px rgba(0,0,0,0.4); }
+            table tbody tr { box-shadow: none; }
+
+            .badge-central              { background: #1e3a5f; color: #93c5fd; }
+            .badge-local                { background: #14532d; color: #86efac; }
+            .badge-legislative_materials     { background: #4a3a12; color: #fde68a; }
+            .badge-legislative_interpretations { background: #3b2d6b; color: #c4b5fd; }
+            .badge-legal_updates        { background: #5b1d3d; color: #f9a8d4; }
+            .badge-default              { background: #2f353d; color: #b8bec5; }
+            .badge-new                  { background: #5f1d1d; color: #fca5a5; }
+
+            mark { background: #665c00; color: #fef08a; }
+
+            .toolbar { box-shadow: 0 6px 8px -6px rgba(0,0,0,0.7); }
+
+            .chip.active { color: #0f1418; }
+            .retry-btn { color: #0f1418; }
+
+            #backToTop { box-shadow: 0 2px 8px rgba(0,0,0,0.6); }
+        }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 </head>
@@ -452,26 +679,39 @@
         <h1>AI法规追踪</h1>
         <div class="timestamp" id="timestamp"></div>
         
-        <div class="controls">
-            <div class="search-box-container">
-                <input type="text" id="searchInput" placeholder="搜索标题、分类、日期、机关或位阶..." oninput="handleSearch()">
-                <button class="search-clear" id="searchClear" onclick="clearSearch()" aria-label="清除搜索">✕</button>
-                <span class="search-icon">🔍</span>
+        <div class="toolbar">
+            <div class="controls">
+                <div class="search-box-container">
+                    <input type="text" id="searchInput" placeholder="搜索标题、分类、日期、机关或位阶...">
+                    <button class="search-clear" id="searchClear" onclick="clearSearch()" aria-label="清除搜索">✕</button>
+                    <span class="search-icon" aria-hidden="true">🔍</span>
+                </div>
+                <div class="stats" id="statsInfo">共 0 条记录</div>
+                <select id="mobileSortSelect" class="mobile-sort-select" onchange="handleMobileSort()" aria-label="排序方式">
+                    <option value="publish_date_desc">公布日期（最新）</option>
+                    <option value="publish_date_asc">公布日期（最旧）</option>
+                    <option value="title_asc">标题（升序）</option>
+                    <option value="title_desc">标题（降序）</option>
+                    <option value="category_asc">分类（升序）</option>
+                    <option value="issuing_authority_asc">制定机关（升序）</option>
+                    <option value="legal_hierarchy_asc">效力位阶（升序）</option>
+                </select>
+                <a class="rss-btn" href="feed.xml" title="RSS订阅 - 获取最新法规更新">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" aria-hidden="true"><path d="M6.18 15.64a2.18 2.18 0 0 1 2.18 2.18C8.36 19.01 7.38 20 6.18 20C4.98 20 4 19.01 4 17.82a2.18 2.18 0 0 1 2.18-2.18M4 4.44A15.56 15.56 0 0 1 19.56 20h-2.83A12.73 12.73 0 0 0 4 7.27V4.44m0 5.66a9.9 9.9 0 0 1 9.9 9.9h-2.83A7.07 7.07 0 0 0 4 12.93V10.1z"/></svg>
+                    RSS订阅
+                </a>
             </div>
-            <div class="stats" id="statsInfo">共加载 0 条数据</div>
-            <select id="mobileSortSelect" class="mobile-sort-select" onchange="handleMobileSort()" aria-label="排序方式">
-                <option value="publish_date_desc">公布日期（最新）</option>
-                <option value="publish_date_asc">公布日期（最旧）</option>
-                <option value="title_asc">标题（升序）</option>
-                <option value="title_desc">标题（降序）</option>
-                <option value="category_asc">分类（升序）</option>
-                <option value="issuing_authority_asc">制定机关（升序）</option>
-                <option value="legal_hierarchy_asc">效力位阶（升序）</option>
-            </select>
-            <a class="rss-btn" href="feed.xml" title="RSS订阅 - 获取最新法规更新">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" aria-hidden="true"><path d="M6.18 15.64a2.18 2.18 0 0 1 2.18 2.18C8.36 19.01 7.38 20 6.18 20C4.98 20 4 19.01 4 17.82a2.18 2.18 0 0 1 2.18-2.18M4 4.44A15.56 15.56 0 0 1 19.56 20h-2.83A12.73 12.73 0 0 0 4 7.27V4.44m0 5.66a9.9 9.9 0 0 1 9.9 9.9h-2.83A7.07 7.07 0 0 0 4 12.93V10.1z"/></svg>
-                RSS订阅
-            </a>
+
+            <div class="filter-chips">
+                <div class="chip-group" id="categoryChips" role="group" aria-label="分类筛选">
+                    <button class="chip active" data-value="all" aria-pressed="true" onclick="setCategoryFilter('all')">全部</button>
+                    <button class="chip" data-value="中央法规" aria-pressed="false" onclick="setCategoryFilter('中央法规')">中央法规</button>
+                    <button class="chip" data-value="地方法规" aria-pressed="false" onclick="setCategoryFilter('地方法规')">地方法规</button>
+                    <button class="chip" data-value="立法资料" aria-pressed="false" onclick="setCategoryFilter('立法资料')">立法资料</button>
+                    <button class="chip" data-value="法规解读" aria-pressed="false" onclick="setCategoryFilter('法规解读')">法规解读</button>
+                    <button class="chip" data-value="法律动态" aria-pressed="false" onclick="setCategoryFilter('法律动态')">法律动态</button>
+                </div>
+            </div>
         </div>
 
         <div class="table-responsive">
@@ -489,7 +729,7 @@
                     <!-- Data will be inserted here -->
                 </tbody>
             </table>
-            <div id="loading">正在加载数据...</div>
+            <div id="loading"><div class="spinner"></div><div>正在加载数据...</div></div>
         </div>
 
         <div class="pagination" id="pagination" style="display: none;">
@@ -517,6 +757,9 @@
         function isMobile() { return window.innerWidth <= 768; }
         function getItemsPerPage() { return isMobile() ? ITEMS_MOBILE : ITEMS_DESKTOP; }
         let currentSort = { column: 'publish_date', direction: 'desc' }; // Default sort
+        let currentCategoryFilter = 'all';
+        let dataReferenceDate = null; // meta.json 的 updated_at，用于「新」徽章判定
+        const expandedRows = new Set(); // keyed by row url, keeps expansion across re-renders
         const categoryMap = {
             central: '中央法规',
             local: '地方法规',
@@ -524,6 +767,115 @@
             legislative_interpretations: '法规解读',
             legal_updates: '法律动态'
         };
+        const VALID_CATEGORIES = ['中央法规', '地方法规', '立法资料', '法规解读', '法律动态'];
+        const VALID_SORT_COLUMNS = ['title', 'category', 'publish_date', 'issuing_authority', 'legal_hierarchy'];
+        const NEW_BADGE_DAYS = 7;
+
+        // HTML 转义：所有注入 innerHTML 的 CSV 字段必须先转义
+        function escapeHtml(str) {
+            return (str == null ? '' : String(str)).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        function escapeRegExp(str) {
+            return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        // 先转义标题与搜索词，再在安全的文本上包 <mark>
+        function highlightTitle(title, term) {
+            const safeTitle = escapeHtml(title || '无标题');
+            if (!term) return safeTitle;
+            const safeTerm = escapeHtml(term);
+            if (!safeTerm) return safeTitle;
+            const re = new RegExp('(' + escapeRegExp(safeTerm) + ')', 'gi');
+            return safeTitle.replace(re, '<mark>$1</mark>');
+        }
+
+        // 统一换算为北京时间（+08:00）的日历日，避免访客本地时区影响「新」判定
+        function toBeijingDate(d) {
+            const shifted = new Date(d.getTime() + 8 * 3600000);
+            return new Date(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+        }
+
+        // publish_date 在参考日期（meta.updated_at，北京时间；缺省为本地当天零点）前 7 天内视为新发
+        function isNewRecord(publishDate) {
+            const m = /^(\d{4})\.(\d{2})(?:\.(\d{2}))?/.exec(publishDate || '');
+            if (!m) return false;
+            // 取舍：仅有月份（YYYY.MM）时按当月 1 号参与判定
+            const pub = new Date(+m[1], +m[2] - 1, m[3] ? +m[3] : 1);
+            if (isNaN(pub.getTime())) return false;
+            const now = new Date();
+            const ref = dataReferenceDate || new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const days = Math.floor((toBeijingDate(ref) - toBeijingDate(pub)) / 86400000);
+            return days >= 0 && days <= NEW_BADGE_DAYS;
+        }
+
+        function setCategoryFilter(value) {
+            currentCategoryFilter = value;
+            currentPage = 1;
+            updateChipStates();
+            applyFilterAndSort();
+        }
+
+        function updateChipStates() {
+            document.querySelectorAll('#categoryChips .chip').forEach(chip => {
+                const active = chip.dataset.value === currentCategoryFilter;
+                chip.classList.toggle('active', active);
+                chip.setAttribute('aria-pressed', String(active));
+            });
+        }
+
+        // 默认状态不写 hash，保持首屏 URL 干净
+        function isDefaultState() {
+            return !document.getElementById('searchInput').value.trim()
+                && currentCategoryFilter === 'all'
+                && currentSort.column === 'publish_date'
+                && currentSort.direction === 'desc'
+                && currentPage === 1;
+        }
+
+        // 状态写入 location.hash（replaceState 不触发 hashchange，避免自循环）
+        function updateHash() {
+            if (isDefaultState()) {
+                history.replaceState(null, '', location.pathname + location.search);
+                return;
+            }
+            const params = new URLSearchParams();
+            const q = document.getElementById('searchInput').value.trim();
+            if (q) params.set('q', q);
+            if (currentCategoryFilter !== 'all') params.set('cat', currentCategoryFilter);
+            if (currentSort.column !== 'publish_date') params.set('sort', currentSort.column);
+            if (currentSort.direction !== 'desc') params.set('dir', currentSort.direction);
+            if (currentPage > 1) params.set('page', String(currentPage));
+            const hash = params.toString();
+            history.replaceState(null, '', hash ? '#' + hash : location.pathname + location.search);
+        }
+
+        // 从 hash 读取状态（仅赋值，不渲染）
+        function restoreStateFromHash() {
+            const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+            document.getElementById('searchInput').value = params.get('q') || '';
+            const cat = params.get('cat');
+            currentCategoryFilter = VALID_CATEGORIES.includes(cat) ? cat : 'all';
+            const sortCol = params.get('sort');
+            if (VALID_SORT_COLUMNS.includes(sortCol)) currentSort.column = sortCol;
+            const dir = params.get('dir');
+            if (dir === 'asc' || dir === 'desc') currentSort.direction = dir;
+            const page = parseInt(params.get('page'), 10);
+            currentPage = (!isNaN(page) && page > 0) ? page : 1;
+            updateClearBtn();
+            updateChipStates();
+        }
+
+        function toggleRowDetail(key) {
+            if (expandedRows.has(key)) {
+                expandedRows.delete(key);
+            } else {
+                expandedRows.add(key);
+            }
+            renderTable();
+        }
 
         document.addEventListener('DOMContentLoaded', init);
 
@@ -545,34 +897,80 @@
                 if (e.key === 'Enter') handlePageJump();
             });
 
-            // Re-render on resize / orientation change to update items-per-page
+            // Search input: IME 组合期间不过滤，输入防抖 150ms
+            const searchInput = document.getElementById('searchInput');
+            let imeComposing = false;
+            let searchDebounceTimer;
+            searchInput.addEventListener('compositionstart', function() { imeComposing = true; });
+            searchInput.addEventListener('compositionend', function() {
+                imeComposing = false;
+                scheduleSearch();
+            });
+            searchInput.addEventListener('input', function() {
+                updateClearBtn();
+                if (imeComposing) return;
+                scheduleSearch();
+            });
+            function scheduleSearch() {
+                clearTimeout(searchDebounceTimer);
+                searchDebounceTimer = setTimeout(handleSearch, 150);
+            }
+
+            // Re-render on resize / orientation change, but only when items-per-page
+            // actually changes (crossing the mobile breakpoint); plain resizes keep the page
+            let lastItemsPerPage = getItemsPerPage();
+            function handleViewportChange() {
+                const perPage = getItemsPerPage();
+                if (perPage === lastItemsPerPage) return;
+                lastItemsPerPage = perPage;
+                currentPage = 1;
+                renderTable();
+            }
             let resizeTimer;
             window.addEventListener('resize', function() {
                 clearTimeout(resizeTimer);
-                resizeTimer = setTimeout(function() {
-                    currentPage = 1;
-                    renderTable();
-                }, 150);
+                resizeTimer = setTimeout(handleViewportChange, 150);
             }, { passive: true });
             window.addEventListener('orientationchange', function() {
-                setTimeout(function() {
-                    currentPage = 1;
-                    renderTable();
-                }, 200);
+                setTimeout(handleViewportChange, 200);
             }, { passive: true });
 
-            // Load timestamp
+            // Restore state from URL hash, then react to back/forward navigation
+            restoreStateFromHash();
+            window.addEventListener('hashchange', function() {
+                restoreStateFromHash();
+                applyFilterAndSort();
+            });
+
+            // meta.json 与 CSV 并行加载，互不阻塞
+            loadMeta();
+            loadCsv();
+        }
+
+        async function loadMeta() {
             try {
                 const metaResponse = await fetch('meta.json');
                 if (metaResponse.ok) {
                     const meta = await metaResponse.json();
                     document.getElementById('timestamp').textContent = `数据更新时间：${meta.updated_at}`;
+                    // updated_at 是北京时间，显式按 +08:00 解析，避免依赖访客本地时区
+                    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(meta.updated_at || '');
+                    if (m) {
+                        const parsed = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4] || '00'}:${m[5] || '00'}:00+08:00`);
+                        if (!isNaN(parsed.getTime())) dataReferenceDate = parsed;
+                    }
                 }
             } catch (e) {
                 console.warn("Failed to load meta.json");
             }
+        }
 
-            // Load CSV
+        function loadCsv() {
+            const loading = document.getElementById('loading');
+            loading.style.display = '';
+            loading.innerHTML = '<div class="spinner"></div><div>正在加载数据...</div>';
+            document.getElementById('pagination').style.display = 'none';
+
             Papa.parse('法规.csv', {
                 download: true,
                 header: true,
@@ -580,16 +978,35 @@
                 complete: function(results) {
                     // Filter out rows that are completely empty or missing critical fields
                     allData = results.data.filter(row => row.title && row.url);
-                    
+
+                    // 裁剪展开状态，避免已不存在的数据残留占用
+                    const currentKeys = new Set(allData.map(row => row.url || row.title));
+                    for (const key of expandedRows) {
+                        if (!currentKeys.has(key)) expandedRows.delete(key);
+                    }
+
                     applyFilterAndSort();
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('pagination').style.display = 'flex';
                 },
                 error: function(err) {
                     console.error("Failed to load CSV", err);
-                    document.getElementById('loading').textContent = '数据加载失败，请刷新页面重试';
+                    showLoadError();
                 }
             });
+        }
+
+        function showLoadError() {
+            document.getElementById('loading').innerHTML = `
+                <div class="error-box">
+                    <div class="error-text">数据加载失败，请检查网络后重试</div>
+                    <button class="retry-btn" onclick="retryLoad()">重试</button>
+                </div>`;
+        }
+
+        function retryLoad() {
+            loadMeta();
+            loadCsv();
         }
 
         function handleSearch() {
@@ -636,9 +1053,12 @@
 
         function applyFilterAndSort() {
             const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
-            
+
             // 1. Filter
             let temp = allData;
+            if (currentCategoryFilter !== 'all') {
+                temp = temp.filter(item => (item.category || '').trim() === currentCategoryFilter);
+            }
             if (searchTerm) {
                 temp = temp.filter(item => {
                     const title = (item.title || '').toLowerCase();
@@ -648,7 +1068,7 @@
                     const hierarchy = (item.legal_hierarchy || '').toLowerCase();
                     return title.includes(searchTerm) || category.includes(searchTerm) ||
                            date.includes(searchTerm) || authority.includes(searchTerm) ||
-                              hierarchy.includes(searchTerm);
+                           hierarchy.includes(searchTerm);
                 });
             }
 
@@ -657,7 +1077,7 @@
                 temp.sort((a, b) => {
                     let valA = (a[currentSort.column] || '').toString().toLowerCase();
                     let valB = (b[currentSort.column] || '').toString().toLowerCase();
-                    
+
                     if (valA < valB) return currentSort.direction === 'asc' ? -1 : 1;
                     if (valA > valB) return currentSort.direction === 'asc' ? 1 : -1;
                     return 0;
@@ -672,7 +1092,10 @@
 
         function updateStats() {
             const total = displayedData.length;
-            document.getElementById('statsInfo').textContent = `共找到 ${total} 条数据`;
+            const filtered = total !== allData.length;
+            document.getElementById('statsInfo').textContent = filtered
+                ? `筛选出 ${total} 条 / 共 ${allData.length} 条记录`
+                : `共 ${total} 条记录`;
         }
 
         function updateHeaders() {
@@ -733,30 +1156,75 @@
             const pageData = displayedData.slice(start, end);
 
             if (pageData.length === 0) {
-                tbody.innerHTML = '<tr class="empty-row"><td colspan="5" style="text-align:center; padding: 20px;">未找到匹配的数据</td></tr>';
+                tbody.innerHTML = '<tr class="empty-row"><td colspan="5" style="text-align:center; padding: 20px;">无匹配记录，试试调整筛选条件或搜索词</td></tr>';
                 renderPagination(0);
+                updateHash();
                 return;
             }
 
+            const highlightTerm = document.getElementById('searchInput').value.trim();
             pageData.forEach(row => {
                 const categoryKey = (row.category || '').toLowerCase();
                 const categoryText = categoryMap[categoryKey] || row.category || '-';
                 const badgeClass = getCategoryBadgeClass(categoryKey);
+                const rowKey = row.url || row.title;
+                const isExpanded = expandedRows.has(rowKey);
                 const tr = document.createElement('tr');
+                tr.className = 'data-row' + (isExpanded ? ' expanded' : '');
+                tr.title = '点击展开详情';
+                tr.tabIndex = 0;
+                tr.setAttribute('aria-expanded', String(isExpanded));
                 const effectiveDateHtml = (row.effective_date && row.effective_date !== row.publish_date)
-                    ? `<small style="color:#666;">（${row.effective_date} 施行）</small>`
+                    ? `<small style="color:var(--muted-color);">（${escapeHtml(row.effective_date)} 施行）</small>`
                     : '';
+                const newBadgeHtml = isNewRecord(row.publish_date)
+                    ? '<span class="badge badge-new">新</span>'
+                    : '';
+                // 仅 http(s) 链接渲染为 <a>，其余降级为纯文本
+                const titleHtml = highlightTitle(row.title, highlightTerm);
+                const titleCellHtml = /^https?:\/\//i.test(row.url || '')
+                    ? `<a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(row.title)}">${titleHtml}</a>`
+                    : `<span class="title-plain" title="${escapeHtml(row.title)}">${titleHtml}</span>`;
                 tr.innerHTML = `
-                    <td class="cell-title"><a href="${row.url}" target="_blank" rel="noopener noreferrer" title="${row.title}">${row.title || '无标题'}</a></td>
-                    <td><span class="cell-label">分类</span><span class="badge ${badgeClass}">${categoryText}</span></td>
-                    <td class="col-date"><span class="cell-label">公布日期</span><span>${row.publish_date || '-'}${effectiveDateHtml}</span></td>
-                    <td class="col-authority"><span class="cell-label">制定机关</span><span>${row.issuing_authority || '-'}</span></td>
-                    <td class="col-hierarchy"><span class="cell-label">效力位阶</span><span>${row.legal_hierarchy || '-'}</span></td>
+                    <td class="cell-title">${titleCellHtml}${newBadgeHtml}</td>
+                    <td><span class="cell-label">分类</span><span class="badge ${badgeClass}">${escapeHtml(categoryText)}</span></td>
+                    <td class="col-date"><span class="cell-label">公布日期</span><span>${escapeHtml(row.publish_date) || '-'}${effectiveDateHtml}</span></td>
+                    <td class="col-authority"><span class="cell-label">制定机关</span><span>${escapeHtml(row.issuing_authority) || '-'}</span></td>
+                    <td class="col-hierarchy"><span class="cell-label">效力位阶</span><span>${escapeHtml(row.legal_hierarchy) || '-'}</span></td>
                 `;
+                tr.addEventListener('click', function(e) {
+                    if (e.target.closest('a')) return; // 点击链接正常跳转，不展开
+                    toggleRowDetail(rowKey);
+                });
+                tr.addEventListener('keydown', function(e) {
+                    if (e.target.closest('a')) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleRowDetail(rowKey);
+                    }
+                });
                 tbody.appendChild(tr);
+
+                if (isExpanded) {
+                    const detailTr = document.createElement('tr');
+                    detailTr.className = 'detail-row';
+                    detailTr.innerHTML = `
+                        <td colspan="5">
+                            <div class="detail-grid">
+                                <div class="detail-item"><span class="detail-label">制定机关</span><span>${escapeHtml(row.issuing_authority) || '-'}</span></div>
+                                <div class="detail-item"><span class="detail-label">效力位阶</span><span>${escapeHtml(row.legal_hierarchy) || '-'}</span></div>
+                                <div class="detail-item"><span class="detail-label">公布日期</span><span>${escapeHtml(row.publish_date) || '-'}</span></div>
+                                <div class="detail-item"><span class="detail-label">施行日期</span><span>${escapeHtml(row.effective_date) || '-'}</span></div>
+                                <div class="detail-item"><span class="detail-label">分类</span><span class="badge ${badgeClass}">${escapeHtml(categoryText)}</span></div>
+                            </div>
+                        </td>
+                    `;
+                    tbody.appendChild(detailTr);
+                }
             });
 
             renderPagination(totalPages);
+            updateHash();
         }
 
         function renderPagination(totalPages) {
