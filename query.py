@@ -216,13 +216,17 @@ def merge_record_fields(base: Record, incoming: Record) -> Record:
     # 融合语义：浏览器记录被 MCP 数据命中后升级为 mcp，其余情况保留 base.source
     if base.source == "browser" and incoming.source == "mcp":
         base.source = "mcp"
-    # 富字段：base 空则补；MCP 来源且更长则覆盖（重扫富化旧数据）
+    # 富字段：base 空则补；MCP 来源且更长则覆盖（重扫富化旧数据）。
+    # timeliness 值域小、状态翻转（尚未施行→现行有效）语义重要，等长不同值也要更新。
     for field in ("timeliness", "document_no", "subject_tags"):
         new_val = getattr(incoming, field)
         old_val = getattr(base, field)
         if not old_val and new_val:
             setattr(base, field, new_val)
-        elif incoming.source == "mcp" and len(new_val) > len(old_val):
+        elif incoming.source == "mcp" and new_val and (
+            len(new_val) > len(old_val)
+            or (field == "timeliness" and new_val != old_val)
+        ):
             setattr(base, field, new_val)
 
     # 同步根据当前 URL 复核 base.category，纠正历史脏数据。
@@ -769,7 +773,7 @@ def load_existing_records(path: Path) -> dict:
                         effective_date=row.get("effective_date", ""),
                         source=row.get("source", "") or "browser",
                         timeliness=row.get("timeliness", ""),
-                        document_no=row.get("document_no", ""),
+                        document_no=_clean_document_no(row.get("document_no", "")),
                         subject_tags=row.get("subject_tags", ""),
                     )
     except Exception as e:
@@ -1220,6 +1224,23 @@ def _extract_mcp_url(item: dict) -> str:
     return re.sub(r"[?&]way=mcp", "", url)
 
 
+def _clean_document_no(value) -> str:
+    """发文字号清洗：去全部空白（MCP 数据有内嵌换行/制表符）；纯符号占位符（如 ---）视为无文号。"""
+    if not isinstance(value, str):
+        return ""
+    cleaned = re.sub(r"\s+", "", value)
+    if cleaned and not re.search(r"[一-鿿0-9A-Za-z]", cleaned):
+        return ""
+    return cleaned
+
+
+def _clean_str_list(value) -> List[str]:
+    """把 MCP 返回的数组字段清洗为字符串列表（防御非 list/非 str 元素）。"""
+    if not isinstance(value, list):
+        return []
+    return [v.strip() for v in value if isinstance(v, str) and v.strip()]
+
+
 def _record_from_mcp_item(item: dict) -> Optional[Record]:
     """把 get_law_list 的单条结果映射为 Record。分类优先取 item 的 Category
     （旧 CSV 迁移行携带），最终由 URL 路径段（chl/lar）复核。"""
@@ -1228,16 +1249,19 @@ def _record_from_mcp_item(item: dict) -> Optional[Record]:
     if not title or not url:
         return None
 
-    departments = [d for d in (item.get("IssueDepartment") or []) if d]
-    hierarchies = [h for h in (item.get("EffectivenessDic") or []) if h]
-    timeliness = "；".join(t for t in (item.get("TimelinessDic") or []) if t)
-    document_no = (item.get("DocumentNO") or "").strip()
+    departments = _clean_str_list(item.get("IssueDepartment"))
+    hierarchies = _clean_str_list(item.get("EffectivenessDic"))
+    timeliness = "；".join(_clean_str_list(item.get("TimelinessDic")))
+    # 发文字号可能带内嵌换行/制表符等脏空白；纯符号占位符（如 ---）视为无文号
+    document_no = _clean_document_no(item.get("DocumentNO"))
     # Category 是数组时表示主题分类（进 subject_tags）；迁移行是"中央/地方法规"
     # 类别字符串，仅作 category 依据，不进 subject_tags
     raw_category = item.get("Category") or ""
     subject_tags = ""
     if isinstance(raw_category, list):
-        subject_tags = "；".join(c for c in raw_category if c)
+        subject_tags = "；".join(_clean_str_list(raw_category))
+        raw_category = ""
+    elif not isinstance(raw_category, str):
         raw_category = ""
 
     return Record(
@@ -1829,7 +1853,7 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                         # 兼容旧版 7 列 CSV：缺 source 列默认 browser；更旧的文件缺富字段列时默认空串
                         source=row.get("source", "") or "browser",
                         timeliness=row.get("timeliness", ""),
-                        document_no=row.get("document_no", ""),
+                        document_no=_clean_document_no(row.get("document_no", "")),
                         subject_tags=row.get("subject_tags", ""),
                     )
                     if not (title_dedup_key(r.title) or url_path_key(r.url)):

@@ -903,7 +903,8 @@
         }
 
         function setTagFilter(tag) {
-            currentTagFilter = tag || '';
+            // 再次点击当前已激活的标签 = 取消筛选（toggle）
+            currentTagFilter = (tag && tag !== currentTagFilter) ? tag : '';
             currentPage = 1;
             updateChipStates();
             applyFilterAndSort();
@@ -919,12 +920,12 @@
             applyFilterAndSort();
         }
 
-        // 位阶下拉选项从当前数据动态收集，按出现次数降序
+        // 位阶下拉选项从当前数据动态收集，按出现次数降序；
+        // 「部门规章；部门工作文件」这类复合值逐项计数，不作为独立选项
         function updateHierarchyOptions() {
             const counts = new Map();
             allData.forEach(row => {
-                const h = (row.legal_hierarchy || '').trim();
-                if (h) counts.set(h, (counts.get(h) || 0) + 1);
+                parseList(row.legal_hierarchy).forEach(h => counts.set(h, (counts.get(h) || 0) + 1));
             });
             const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'));
             const sel = document.getElementById('hierarchySelect');
@@ -1089,6 +1090,9 @@
             restoreStateFromHash();
             window.addEventListener('hashchange', function() {
                 restoreStateFromHash();
+                // 数据已加载时校验位阶取值有效性：数据中不存在则回退（同时重置筛选变量与下拉框）
+                // 数据未加载时跳过，避免把 hash 还原的合法取值误清
+                if (allData.length) updateHierarchyOptions();
                 applyFilterAndSort();
             });
 
@@ -1214,7 +1218,7 @@
                 temp = temp.filter(item => parseList(item.timeliness).includes(currentTimelinessFilter));
             }
             if (currentHierarchyFilter !== 'all') {
-                temp = temp.filter(item => (item.legal_hierarchy || '').trim() === currentHierarchyFilter);
+                temp = temp.filter(item => parseList(item.legal_hierarchy).includes(currentHierarchyFilter));
             }
             if (currentTagFilter) {
                 temp = temp.filter(item => parseList(item.subject_tags).includes(currentTagFilter));
