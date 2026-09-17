@@ -317,6 +317,54 @@
         .badge-legal_updates        { background: #fce7f3; color: #be185d; }
         .badge-default              { background: #f1f5f9; color: #475569; }
         .badge-new                  { background: #fee2e2; color: #b91c1c; margin-left: 6px; }
+        .badge-pending              { background: #ffedd5; color: #c2410c; margin-left: 6px; }
+
+        /* Subject tag pills: smaller & subtler than category badges */
+        .tag-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 6px;
+        }
+        .tag-pill {
+            display: inline-block;
+            padding: 1px 8px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            background: transparent;
+            color: var(--muted-color);
+            font-size: 0.72em;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+        .tag-pill:hover {
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }
+        .tag-pill.active {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+            color: #fff;
+        }
+
+        /* Filter labels & hierarchy select inside the filter area */
+        .filter-label {
+            font-size: 0.85em;
+            color: var(--muted-color);
+            white-space: nowrap;
+        }
+        .hierarchy-select {
+            padding: 5px 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            background: var(--card-bg);
+            color: var(--text-secondary);
+            font-size: 0.85em;
+            cursor: pointer;
+            max-width: 100%;
+        }
+        .tag-filter-row[hidden] { display: none; }
 
         /* Search keyword highlight */
         mark {
@@ -661,6 +709,10 @@
             .badge-legal_updates        { background: #5b1d3d; color: #f9a8d4; }
             .badge-default              { background: #2f353d; color: #b8bec5; }
             .badge-new                  { background: #5f1d1d; color: #fca5a5; }
+            .badge-pending              { background: #5a3410; color: #fdba74; }
+
+            .tag-pill { border-color: var(--border-strong); }
+            .tag-pill.active { color: #0f1418; }
 
             mark { background: #665c00; color: #fef08a; }
 
@@ -682,7 +734,7 @@
         <div class="toolbar">
             <div class="controls">
                 <div class="search-box-container">
-                    <input type="text" id="searchInput" placeholder="搜索标题、分类、日期、机关或位阶...">
+                    <input type="text" id="searchInput" placeholder="搜索标题、分类、日期、机关、位阶、发文字号或标签...">
                     <button class="search-clear" id="searchClear" onclick="clearSearch()" aria-label="清除搜索">✕</button>
                     <span class="search-icon" aria-hidden="true">🔍</span>
                 </div>
@@ -710,6 +762,21 @@
                     <button class="chip" data-value="立法资料" aria-pressed="false" onclick="setCategoryFilter('立法资料')">立法资料</button>
                     <button class="chip" data-value="法规解读" aria-pressed="false" onclick="setCategoryFilter('法规解读')">法规解读</button>
                     <button class="chip" data-value="法律动态" aria-pressed="false" onclick="setCategoryFilter('法律动态')">法律动态</button>
+                </div>
+                <div class="chip-group" id="timelinessChips" role="group" aria-label="时效性筛选">
+                    <button class="chip active" data-value="all" aria-pressed="true" onclick="setTimelinessFilter('all')">全部时效</button>
+                    <button class="chip" data-value="现行有效" aria-pressed="false" onclick="setTimelinessFilter('现行有效')">现行有效</button>
+                    <button class="chip" data-value="尚未施行" aria-pressed="false" onclick="setTimelinessFilter('尚未施行')">尚未施行</button>
+                </div>
+                <div class="chip-group">
+                    <label class="filter-label" for="hierarchySelect">效力位阶</label>
+                    <select id="hierarchySelect" class="hierarchy-select" onchange="handleHierarchyFilter()" aria-label="效力位阶筛选">
+                        <option value="all">全部位阶</option>
+                    </select>
+                </div>
+                <div class="chip-group tag-filter-row" id="tagFilterRow" hidden>
+                    <span class="filter-label">标签筛选：</span>
+                    <button class="chip active" id="tagFilterChip" onclick="clearTagFilter()" aria-pressed="true" title="点击清除标签筛选"></button>
                 </div>
             </div>
         </div>
@@ -758,6 +825,9 @@
         function getItemsPerPage() { return isMobile() ? ITEMS_MOBILE : ITEMS_DESKTOP; }
         let currentSort = { column: 'publish_date', direction: 'desc' }; // Default sort
         let currentCategoryFilter = 'all';
+        let currentTimelinessFilter = 'all';
+        let currentHierarchyFilter = 'all';
+        let currentTagFilter = '';
         let dataReferenceDate = null; // meta.json 的 updated_at，用于「新」徽章判定
         const expandedRows = new Set(); // keyed by row url, keeps expansion across re-renders
         const categoryMap = {
@@ -768,8 +838,15 @@
             legal_updates: '法律动态'
         };
         const VALID_CATEGORIES = ['中央法规', '地方法规', '立法资料', '法规解读', '法律动态'];
+        const VALID_TIMELINESS = ['现行有效', '尚未施行'];
         const VALID_SORT_COLUMNS = ['title', 'category', 'publish_date', 'issuing_authority', 'legal_hierarchy'];
         const NEW_BADGE_DAYS = 7;
+        const MAX_VISIBLE_TAGS = 3;
+
+        // 「；」连接的多值字段（timeliness / subject_tags），容忍空值与缺列
+        function parseList(str) {
+            return (str || '').split(/[；;]/).map(s => s.trim()).filter(Boolean);
+        }
 
         // HTML 转义：所有注入 innerHTML 的 CSV 字段必须先转义
         function escapeHtml(str) {
@@ -818,18 +895,81 @@
             applyFilterAndSort();
         }
 
-        function updateChipStates() {
-            document.querySelectorAll('#categoryChips .chip').forEach(chip => {
-                const active = chip.dataset.value === currentCategoryFilter;
-                chip.classList.toggle('active', active);
-                chip.setAttribute('aria-pressed', String(active));
+        function setTimelinessFilter(value) {
+            currentTimelinessFilter = value;
+            currentPage = 1;
+            updateChipStates();
+            applyFilterAndSort();
+        }
+
+        function setTagFilter(tag) {
+            currentTagFilter = tag || '';
+            currentPage = 1;
+            updateChipStates();
+            applyFilterAndSort();
+        }
+
+        function clearTagFilter() {
+            setTagFilter('');
+        }
+
+        function handleHierarchyFilter() {
+            currentHierarchyFilter = document.getElementById('hierarchySelect').value;
+            currentPage = 1;
+            applyFilterAndSort();
+        }
+
+        // 位阶下拉选项从当前数据动态收集，按出现次数降序
+        function updateHierarchyOptions() {
+            const counts = new Map();
+            allData.forEach(row => {
+                const h = (row.legal_hierarchy || '').trim();
+                if (h) counts.set(h, (counts.get(h) || 0) + 1);
             });
+            const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'));
+            const sel = document.getElementById('hierarchySelect');
+            sel.innerHTML = '<option value="all">全部位阶</option>' + sorted.map(([h, n]) =>
+                `<option value="${escapeHtml(h)}">${escapeHtml(h)}（${n}）</option>`).join('');
+            // 数据更新后当前位阶可能已不存在
+            if (currentHierarchyFilter !== 'all' && !counts.has(currentHierarchyFilter)) {
+                currentHierarchyFilter = 'all';
+            }
+            sel.value = currentHierarchyFilter;
+        }
+
+        function updateChipStates() {
+            const groups = [
+                ['categoryChips', currentCategoryFilter],
+                ['timelinessChips', currentTimelinessFilter]
+            ];
+            groups.forEach(([groupId, value]) => {
+                document.querySelectorAll(`#${groupId} .chip`).forEach(chip => {
+                    const active = chip.dataset.value === value;
+                    chip.classList.toggle('active', active);
+                    chip.setAttribute('aria-pressed', String(active));
+                });
+            });
+            // 标签筛选状态行
+            const tagRow = document.getElementById('tagFilterRow');
+            if (currentTagFilter) {
+                tagRow.hidden = false;
+                document.getElementById('tagFilterChip').textContent = currentTagFilter + ' ✕';
+            } else {
+                tagRow.hidden = true;
+            }
+            // 位阶下拉（选项可能尚未生成）
+            const sel = document.getElementById('hierarchySelect');
+            const hasValue = Array.from(sel.options).some(o => o.value === currentHierarchyFilter);
+            sel.value = hasValue ? currentHierarchyFilter : 'all';
         }
 
         // 默认状态不写 hash，保持首屏 URL 干净
         function isDefaultState() {
             return !document.getElementById('searchInput').value.trim()
                 && currentCategoryFilter === 'all'
+                && currentTimelinessFilter === 'all'
+                && currentHierarchyFilter === 'all'
+                && !currentTagFilter
                 && currentSort.column === 'publish_date'
                 && currentSort.direction === 'desc'
                 && currentPage === 1;
@@ -845,6 +985,9 @@
             const q = document.getElementById('searchInput').value.trim();
             if (q) params.set('q', q);
             if (currentCategoryFilter !== 'all') params.set('cat', currentCategoryFilter);
+            if (currentTimelinessFilter !== 'all') params.set('tim', currentTimelinessFilter);
+            if (currentHierarchyFilter !== 'all') params.set('hier', currentHierarchyFilter);
+            if (currentTagFilter) params.set('tag', currentTagFilter);
             if (currentSort.column !== 'publish_date') params.set('sort', currentSort.column);
             if (currentSort.direction !== 'desc') params.set('dir', currentSort.direction);
             if (currentPage > 1) params.set('page', String(currentPage));
@@ -858,6 +1001,13 @@
             document.getElementById('searchInput').value = params.get('q') || '';
             const cat = params.get('cat');
             currentCategoryFilter = VALID_CATEGORIES.includes(cat) ? cat : 'all';
+            const tim = params.get('tim');
+            currentTimelinessFilter = VALID_TIMELINESS.includes(tim) ? tim : 'all';
+            // tag / hier 的合法取值随数据动态变化，这里仅做非空与长度校验
+            const hier = params.get('hier');
+            currentHierarchyFilter = (hier && hier.length <= 100) ? hier : 'all';
+            const tag = params.get('tag');
+            currentTagFilter = (tag && tag.length <= 50) ? tag : '';
             const sortCol = params.get('sort');
             if (VALID_SORT_COLUMNS.includes(sortCol)) currentSort.column = sortCol;
             const dir = params.get('dir');
@@ -985,6 +1135,7 @@
                         if (!currentKeys.has(key)) expandedRows.delete(key);
                     }
 
+                    updateHierarchyOptions();
                     applyFilterAndSort();
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('pagination').style.display = 'flex';
@@ -1059,6 +1210,15 @@
             if (currentCategoryFilter !== 'all') {
                 temp = temp.filter(item => (item.category || '').trim() === currentCategoryFilter);
             }
+            if (currentTimelinessFilter !== 'all') {
+                temp = temp.filter(item => parseList(item.timeliness).includes(currentTimelinessFilter));
+            }
+            if (currentHierarchyFilter !== 'all') {
+                temp = temp.filter(item => (item.legal_hierarchy || '').trim() === currentHierarchyFilter);
+            }
+            if (currentTagFilter) {
+                temp = temp.filter(item => parseList(item.subject_tags).includes(currentTagFilter));
+            }
             if (searchTerm) {
                 temp = temp.filter(item => {
                     const title = (item.title || '').toLowerCase();
@@ -1066,9 +1226,12 @@
                     const date = (item.publish_date || '').toLowerCase();
                     const authority = (item.issuing_authority || '').toLowerCase();
                     const hierarchy = (item.legal_hierarchy || '').toLowerCase();
+                    const documentNo = (item.document_no || '').toLowerCase();
+                    const subjectTags = (item.subject_tags || '').toLowerCase();
                     return title.includes(searchTerm) || category.includes(searchTerm) ||
                            date.includes(searchTerm) || authority.includes(searchTerm) ||
-                           hierarchy.includes(searchTerm);
+                           hierarchy.includes(searchTerm) || documentNo.includes(searchTerm) ||
+                           subjectTags.includes(searchTerm);
                 });
             }
 
@@ -1180,24 +1343,34 @@
                 const newBadgeHtml = isNewRecord(row.publish_date)
                     ? '<span class="badge badge-new">新</span>'
                     : '';
+                const pendingBadgeHtml = parseList(row.timeliness).includes('尚未施行')
+                    ? '<span class="badge badge-pending">尚未施行</span>'
+                    : '';
                 // 仅 http(s) 链接渲染为 <a>，其余降级为纯文本
                 const titleHtml = highlightTitle(row.title, highlightTerm);
                 const titleCellHtml = /^https?:\/\//i.test(row.url || '')
                     ? `<a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(row.title)}">${titleHtml}</a>`
                     : `<span class="title-plain" title="${escapeHtml(row.title)}">${titleHtml}</span>`;
+                const tags = parseList(row.subject_tags);
+                const tagPillsHtml = tags.length
+                    ? `<div class="tag-pills">${tags.slice(0, MAX_VISIBLE_TAGS).map(t =>
+                        `<button class="tag-pill${t === currentTagFilter ? ' active' : ''}" data-tag="${escapeHtml(t)}" title="按标签「${escapeHtml(t)}」筛选">${escapeHtml(t)}</button>`).join('')}</div>`
+                    : '';
                 tr.innerHTML = `
-                    <td class="cell-title">${titleCellHtml}${newBadgeHtml}</td>
+                    <td class="cell-title">${titleCellHtml}${newBadgeHtml}${pendingBadgeHtml}${tagPillsHtml}</td>
                     <td><span class="cell-label">分类</span><span class="badge ${badgeClass}">${escapeHtml(categoryText)}</span></td>
                     <td class="col-date"><span class="cell-label">公布日期</span><span>${escapeHtml(row.publish_date) || '-'}${effectiveDateHtml}</span></td>
                     <td class="col-authority"><span class="cell-label">制定机关</span><span>${escapeHtml(row.issuing_authority) || '-'}</span></td>
                     <td class="col-hierarchy"><span class="cell-label">效力位阶</span><span>${escapeHtml(row.legal_hierarchy) || '-'}</span></td>
                 `;
                 tr.addEventListener('click', function(e) {
+                    const pill = e.target.closest('.tag-pill');
+                    if (pill) { setTagFilter(pill.dataset.tag); return; } // 点击标签胶囊 = 设为标签筛选
                     if (e.target.closest('a')) return; // 点击链接正常跳转，不展开
                     toggleRowDetail(rowKey);
                 });
                 tr.addEventListener('keydown', function(e) {
-                    if (e.target.closest('a')) return;
+                    if (e.target.closest('a, button')) return; // 链接与按钮走原生行为
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
                         toggleRowDetail(rowKey);
@@ -1208,17 +1381,27 @@
                 if (isExpanded) {
                     const detailTr = document.createElement('tr');
                     detailTr.className = 'detail-row';
+                    const allTagsHtml = tags.length
+                        ? tags.map(t => `<button class="tag-pill${t === currentTagFilter ? ' active' : ''}" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('')
+                        : '—';
                     detailTr.innerHTML = `
                         <td colspan="5">
                             <div class="detail-grid">
-                                <div class="detail-item"><span class="detail-label">制定机关</span><span>${escapeHtml(row.issuing_authority) || '-'}</span></div>
-                                <div class="detail-item"><span class="detail-label">效力位阶</span><span>${escapeHtml(row.legal_hierarchy) || '-'}</span></div>
-                                <div class="detail-item"><span class="detail-label">公布日期</span><span>${escapeHtml(row.publish_date) || '-'}</span></div>
-                                <div class="detail-item"><span class="detail-label">施行日期</span><span>${escapeHtml(row.effective_date) || '-'}</span></div>
+                                <div class="detail-item"><span class="detail-label">制定机关</span><span>${escapeHtml(row.issuing_authority) || '—'}</span></div>
+                                <div class="detail-item"><span class="detail-label">效力位阶</span><span>${escapeHtml(row.legal_hierarchy) || '—'}</span></div>
+                                <div class="detail-item"><span class="detail-label">公布日期</span><span>${escapeHtml(row.publish_date) || '—'}</span></div>
+                                <div class="detail-item"><span class="detail-label">施行日期</span><span>${escapeHtml(row.effective_date) || '—'}</span></div>
                                 <div class="detail-item"><span class="detail-label">分类</span><span class="badge ${badgeClass}">${escapeHtml(categoryText)}</span></div>
+                                <div class="detail-item"><span class="detail-label">发文字号</span><span>${escapeHtml(row.document_no) || '—'}</span></div>
+                                <div class="detail-item"><span class="detail-label">时效性</span><span>${escapeHtml(row.timeliness) || '—'}</span></div>
+                                <div class="detail-item"><span class="detail-label">主题标签</span><span class="tag-pills" style="margin-top:0;">${allTagsHtml}</span></div>
                             </div>
                         </td>
                     `;
+                    detailTr.addEventListener('click', function(e) {
+                        const pill = e.target.closest('.tag-pill');
+                        if (pill) setTagFilter(pill.dataset.tag);
+                    });
                     tbody.appendChild(detailTr);
                 }
             });
