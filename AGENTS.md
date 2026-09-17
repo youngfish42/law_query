@@ -49,14 +49,23 @@ law_scraper/
 | `legal_hierarchy` | 效力位阶 | 行政法规 |
 | `effective_date` | `YYYY.MM.DD` 或 `YYYY.MM`（施行日期） | 2026.07.01 |
 | `source` | 数据来源（browser / mcp），仅用于落盘存储，**不用于**网页 / RSS 展示 | mcp |
+| `timeliness` | 时效性（；连接，仅 MCP 渠道有） | 现行有效 |
+| `document_no` | 发文字号（仅 MCP 渠道有） | 国发〔2026〕1号 |
+| `subject_tags` | 主题分类标签（；连接，仅 MCP 渠道有） | 科技；经济 |
 
 `meta.json` 形如 `{"updated_at": "2026-06-12 08:00"}`（北京时间）。
 
-`法规_mcp.jsonl` 每行一个 JSON 对象：MCP 原始 item 的全部字段，
+`法规_mcp.jsonl` 每行一个 JSON 对象：MCP 原始 item 的全部字段
+（get_law_list 的 LawModel 共 9 字段：Title/Url/Category/DocumentNO/IssueDepartment/
+IssueDate/ImplementDate/TimelinessDic/EffectivenessDic），
 外加 `__meta` 子对象（`retrieved_at` / `keyword` / `search_field`，多次检索的关键词
 累积进 `keywords` 列表）记录检索上下文。JSONL 是 MCP 数据的**真相来源**，
 `法规.csv` 可随时用 `--fuse-only` 从中重建（写入经临时文件原子替换）。
-派生 Record（写入 `法规.csv`）时，`IssueDepartment` 全量以 `；` 连接为 `issuing_authority`。
+派生 Record（写入 `法规.csv`）时，`IssueDepartment` 全量以 `；` 连接为 `issuing_authority`；
+`Category` 是**主题分类**数组（科技/经济/公安…，与中央/地方法规的类别无关），
+映射为 `subject_tags`；`TimelinessDic`→`timeliness`，`DocumentNO`→`document_no`。
+注意：早期从 `法规_mcp.csv` 迁移的行 Category 是类别字符串（非主题数组），不派生 subject_tags，
+重扫（`--refresh`）后会被富字段行整体替换。
 MCP 抓取完成后自动融合进 `法规.csv`（浏览器 + MCP 双渠道融合，网页 / RSS 只读 `法规.csv`）。
 MCP 服务仅覆盖中央 / 地方法规库，单次检索上限 20 条且不支持翻页，
 其 `category` 由 URL 路径段（chl/lar）经 `enforce_category_by_url()` 推断。
@@ -88,6 +97,9 @@ python query.py --source mcp --keyword 智能 --days 5 --out "法规_mcp.jsonl"
 
 # MCP 历史回填：优先补当月缺漏，再倒序补 start-month 起的历史月份（只扫未覆盖的日期窗口）
 python query.py --source mcp --backfill --start-month 2025.01 --keyword "智能,算力" --out "法规_mcp.jsonl"
+
+# MCP 全量重扫（忽略覆盖账本，用富字段原地富化 JSONL 历史数据；积分预算制，耗尽后续日再跑）
+python query.py --source mcp --backfill --refresh --start-month 2025.01 --points-budget 9000 --keyword "智能,算力"
 
 # 不检索，仅从 JSONL 重建融合 法规.csv（含旧 CSV 一次性迁移）
 python query.py --source mcp --fuse-only
@@ -137,7 +149,7 @@ CI 默认依次抓取的关键词列表（位于 workflow 中）：
 - MCP 退出码约定：`0` 成功；`2` MCP 当日不可用（401/403/429 或 token 缺失，确定性错误，当日重试无意义）；`1` 瞬时故障。每日任务据此 fail-fast：命中退出码 2 时剩余关键词全部改走浏览器，不再逐个无效尝试。
 - Workflow 会 `git add 法规.csv 法规_mcp.jsonl mcp_backfill_state.json meta.json feed.xml` 并自动 commit & push，**请不要**让脚本写入其他需要提交的文件，除非同步更新 workflow。
 - 修改 workflow 里的自动提交步骤时，注意保留其中已配置的 `git config user.email / user.name`，不要随意替换 bot 身份。
-- `backfill_mcp.yml` 为**仅手动触发**的 MCP 历史回填 Action：用户在签到领取积分（约 10000 分/日）后触发，优先补当月缺漏、再倒序回填 `start_month` 起的历史月份（回填同样会融合更新 `法规.csv`，并重新生成 `feed.xml`）；`points_budget` 默认 `0`=不限（持续到积分耗尽，进度实时保存、下次续扫）。
+- `backfill_mcp.yml` 为**仅手动触发**的 MCP 历史回填 Action：用户在签到领取积分（约 10000 分/日）后触发，优先补当月缺漏、再倒序回填 `start_month` 起的历史月份（回填同样会融合更新 `法规.csv`，并重新生成 `feed.xml`）；`points_budget` 默认 `0`=不限（持续到积分耗尽，进度实时保存、下次续扫）；`refresh=true` 时忽略覆盖账本全月重扫（用于富化历史数据的富字段）。
 - 覆盖账本 `mcp_backfill_state.json`（v2，随仓库提交）记录每个 月份×关键词 已**确定覆盖**的日区间：日期 D 被覆盖 = 存在一次在 D 当日或之后执行且窗口包含 D 的成功扫描；每次 MCP 检索（含每日任务与手动 `--month`）成功后自动入账，回填只扫未覆盖的补集窗口。
 
 ## 9. 协作准则（给 AI 的硬性约束）
