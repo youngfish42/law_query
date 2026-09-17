@@ -86,6 +86,9 @@ class Record:
     legal_hierarchy: str = ""   # 效力位阶
     effective_date: str = ""    # YYYY.MM.DD，来源于列表的“施行/实施/生效”日期
     source: str = "browser"     # 数据来源：browser | mcp
+    timeliness: str = ""        # 时效性（MCP TimelinessDic，；连接）
+    document_no: str = ""       # 发文字号（MCP DocumentNO）
+    subject_tags: str = ""      # 主题分类（MCP Category 数组，；连接）
 
 
 PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}(?:\.\d{2})?)\s*公布")
@@ -213,6 +216,14 @@ def merge_record_fields(base: Record, incoming: Record) -> Record:
     # 融合语义：浏览器记录被 MCP 数据命中后升级为 mcp，其余情况保留 base.source
     if base.source == "browser" and incoming.source == "mcp":
         base.source = "mcp"
+    # 富字段：base 空则补；MCP 来源且更长则覆盖（重扫富化旧数据）
+    for field in ("timeliness", "document_no", "subject_tags"):
+        new_val = getattr(incoming, field)
+        old_val = getattr(base, field)
+        if not old_val and new_val:
+            setattr(base, field, new_val)
+        elif incoming.source == "mcp" and len(new_val) > len(old_val):
+            setattr(base, field, new_val)
 
     # 同步根据当前 URL 复核 base.category，纠正历史脏数据。
     base.category = enforce_category_by_url(base.category, base.url)
@@ -244,6 +255,9 @@ def _merge_into_maps(record: Record, by_title: dict, by_url: dict) -> None:
             legal_hierarchy=record.legal_hierarchy,
             effective_date=record.effective_date,
             source=record.source,
+            timeliness=record.timeliness,
+            document_no=record.document_no,
+            subject_tags=record.subject_tags,
         )
         if tkey:
             by_title[tkey] = new_rec
@@ -754,6 +768,9 @@ def load_existing_records(path: Path) -> dict:
                         legal_hierarchy=row.get("legal_hierarchy", ""),
                         effective_date=row.get("effective_date", ""),
                         source=row.get("source", "") or "browser",
+                        timeliness=row.get("timeliness", ""),
+                        document_no=row.get("document_no", ""),
+                        subject_tags=row.get("subject_tags", ""),
                     )
     except Exception as e:
         print(f"Warning: 读取现有CSV失败: {e}")
@@ -1213,10 +1230,15 @@ def _record_from_mcp_item(item: dict) -> Optional[Record]:
 
     departments = [d for d in (item.get("IssueDepartment") or []) if d]
     hierarchies = [h for h in (item.get("EffectivenessDic") or []) if h]
-    # 真实 MCP 响应中 Category 是数组（迁移行是字符串），统一为字符串
+    timeliness = "；".join(t for t in (item.get("TimelinessDic") or []) if t)
+    document_no = (item.get("DocumentNO") or "").strip()
+    # Category 是数组时表示主题分类（进 subject_tags）；迁移行是"中央/地方法规"
+    # 类别字符串，仅作 category 依据，不进 subject_tags
     raw_category = item.get("Category") or ""
+    subject_tags = ""
     if isinstance(raw_category, list):
-        raw_category = "；".join(c for c in raw_category if c)
+        subject_tags = "；".join(c for c in raw_category if c)
+        raw_category = ""
 
     return Record(
         category=enforce_category_by_url(raw_category, url),
@@ -1227,6 +1249,9 @@ def _record_from_mcp_item(item: dict) -> Optional[Record]:
         legal_hierarchy="；".join(hierarchies),
         effective_date=_normalize_mcp_date(item.get("ImplementDate") or ""),
         source="mcp",
+        timeliness=timeliness,
+        document_no=document_no,
+        subject_tags=subject_tags,
     )
 
 
@@ -1467,12 +1492,15 @@ def run_mcp_backfill(
     out_json: Optional[Path],
     fulltext: bool = False,
     state_path: Path = MCP_BACKFILL_STATE_PATH,
+    refresh: bool = False,
 ) -> None:
     """按积分预算回填漏扫的法规（当月补漏优先，随后 start_month 起的历史月份倒序）。
 
     原始结果逐段落盘 JSONL，回填结束后统一派生融合进 法规.csv。
     覆盖账本（state 文件，随仓库提交）记录每个 月份×关键词 已确定覆盖的日区间，
     回填只扫未覆盖的补集窗口；每段扫描成功即时入账，断点续扫粒度精确到日区间。
+    refresh=True 时忽略覆盖账本、全月重扫（用于用富字段原地富化历史数据），
+    扫描成功后仍照常记账。
     points_budget=0 表示不限预算，直到积分耗尽（McpUnavailableError 时优雅停止）。"""
     _migrate_mcp_csv_to_jsonl(MCP_LEGACY_CSV_PATH, MCP_JSONL_DEFAULT_PATH)
     token = os.environ.get(MCP_TOKEN_ENV, "").strip()
@@ -1502,6 +1530,8 @@ def run_mcp_backfill(
     else:
         print(f"积分预算 {points_budget} ≈ {budget_calls} 次检索调用（约 {MCP_POINTS_PER_CALL} 积分/次）")
     print(f"回填范围: 当月补漏 + {start_month} ~ {prev_month_prefix}，共 {len(months)} 个月 × {len(keywords)} 个关键词")
+    if refresh:
+        print("refresh 模式：忽略覆盖账本，全月重扫（成功后照常记账）")
 
     try:
         _mcp_handshake(token)
@@ -1523,8 +1553,12 @@ def run_mcp_backfill(
         for kw in keywords:
             if stop:
                 break
-            todo = _complement_intervals(
-                coverage.get(month_prefix, {}).get(kw, []), effective_last
+            todo = (
+                [[1, effective_last]]
+                if refresh
+                else _complement_intervals(
+                    coverage.get(month_prefix, {}).get(kw, []), effective_last
+                )
             )
             if not todo:
                 continue
@@ -1792,8 +1826,11 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
                         issuing_authority=row.get("issuing_authority", ""),
                         legal_hierarchy=row.get("legal_hierarchy", ""),
                         effective_date=row.get("effective_date", ""),
-                        # 兼容旧版 7 列 CSV：缺 source 列默认 browser
+                        # 兼容旧版 7 列 CSV：缺 source 列默认 browser；更旧的文件缺富字段列时默认空串
                         source=row.get("source", "") or "browser",
+                        timeliness=row.get("timeliness", ""),
+                        document_no=row.get("document_no", ""),
+                        subject_tags=row.get("subject_tags", ""),
                     )
                     if not (title_dedup_key(r.title) or url_path_key(r.url)):
                         continue
@@ -1830,7 +1867,8 @@ def write_csv(path: Path, rows: Iterable[Record]) -> None:
             f,
             fieldnames=["category", "title", "url", "publish_date",
                         "issuing_authority", "legal_hierarchy",
-                        "effective_date", "source"],
+                        "effective_date", "source",
+                        "timeliness", "document_no", "subject_tags"],
         )
         w.writeheader()
         for r in sorted_records:
@@ -2079,6 +2117,12 @@ def parse_args() -> argparse.Namespace:
         "（进度记录在 mcp_backfill_state.json，断点续扫）",
     )
     ap.add_argument(
+        "--refresh",
+        action="store_true",
+        help="仅配合 --source mcp --backfill 使用：忽略覆盖账本全月重扫"
+        "（用富字段原地富化 JSONL 历史数据），扫描成功后仍照常记账",
+    )
+    ap.add_argument(
         "--start-month",
         default=None,
         help="回填起始月份（格式 YYYY.MM），--backfill 必填",
@@ -2130,6 +2174,9 @@ def main() -> None:
     if args.days is not None and args.days < 1:
         raise SystemExit(f"--days 应为正整数，收到: {args.days!r}")
 
+    if args.refresh and not (args.source == "mcp" and args.backfill):
+        raise SystemExit("--refresh 仅配合 --source mcp --backfill 使用")
+
     if args.enrich_existing:
         out_csv = Path(args.out) if args.out else MERGED_CSV_PATH
         records = asyncio.run(
@@ -2176,6 +2223,7 @@ def main() -> None:
                 out_jsonl=out_jsonl,
                 out_json=out_json,
                 fulltext=args.fulltext,
+                refresh=args.refresh,
             )
             print(f"完成。JSONL文件: {out_jsonl.resolve()}")
             print(f"CSV文件: {MERGED_CSV_PATH.resolve()}")
