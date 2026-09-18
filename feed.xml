@@ -5,9 +5,25 @@
     <link>https://youngfish42.github.io/law_query/</link>
     <description>AI、数智化、大模型等相关法规的最新更新订阅</description>
     <language>zh-CN</language>
-    <lastBuildDate>Thu, 17 Sep 2026 08:56:00 +0800</lastBuildDate>
+    <lastBuildDate>Fri, 18 Sep 2026 08:50:00 +0800</lastBuildDate>
     <ttl>1440</ttl>
     <atom:link href="https://youngfish42.github.io/law_query/feed.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>2026年人工智能技术赋能网络安全应用测试结果发布</title>
+      <link>https://www.pkulaw.com/news/a6e60786431ab8d6bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
+      <description>分类：法律动态；公布日期：2026.09.17；制定机关：国家互联网应急中心CNCERT</description>
+      <guid isPermaLink="true">https://www.pkulaw.com/news/a6e60786431ab8d6bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
+      <category>法律动态</category>
+      <pubDate>Thu, 17 Sep 2026 00:00:00 +0800</pubDate>
+    </item>
+    <item>
+      <title>网安标委发布《人工智能应用安全指引总则》等4项网络安全标准实践指南</title>
+      <link>https://www.pkulaw.com/news/a0361d6bcae7b9e9bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
+      <description>分类：法律动态；公布日期：2026.09.17；制定机关：全国网络安全标准化技术委员会</description>
+      <guid isPermaLink="true">https://www.pkulaw.com/news/a0361d6bcae7b9e9bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
+      <category>法律动态</category>
+      <pubDate>Thu, 17 Sep 2026 00:00:00 +0800</pubDate>
+    </item>
     <item>
       <title>中国互联网协会关于召开“2026(第三届)集团企业数智化技术创新与生态大会”的通知</title>
       <link>https://www.pkulaw.com/chl/4e8798b53610d11fbdfb.html</link>
@@ -791,22 +807,6 @@
       <guid isPermaLink="true">https://www.pkulaw.com/lar/ed0539712c30f466d8d9a9dd835e5345bdfb.html</guid>
       <category>地方法规</category>
       <pubDate>Tue, 25 Aug 2026 00:00:00 +0800</pubDate>
-    </item>
-    <item>
-      <title>山东省工业和信息化厅、山东省财政厅关于组织开展山东省人工智能终端财政奖补资金申报工作的通知</title>
-      <link>https://www.pkulaw.com/lar/d8e87943c15130fb24976aefd597a258bdfb.html</link>
-      <description>分类：地方法规；公布日期：2026.08.25；制定机关：山东省；山东省其他机构；山东省工业和信息化厅；山东省财政厅；效力位阶：地方工作文件；时效性：现行有效</description>
-      <guid isPermaLink="true">https://www.pkulaw.com/lar/d8e87943c15130fb24976aefd597a258bdfb.html</guid>
-      <category>地方法规</category>
-      <pubDate>Tue, 25 Aug 2026 00:00:00 +0800</pubDate>
-    </item>
-    <item>
-      <title>安徽出台行动方案 大力推进人工智能OPC创新创业发展</title>
-      <link>https://www.pkulaw.com/news/23b6ec9575c9a73cbdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
-      <description>分类：法律动态；公布日期：2026.08.24；制定机关：安徽</description>
-      <guid isPermaLink="true">https://www.pkulaw.com/news/23b6ec9575c9a73cbdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
-      <category>法律动态</category>
-      <pubDate>Mon, 24 Aug 2026 00:00:00 +0800</pubDate>
     </item>
   </channel>
 </rss>
