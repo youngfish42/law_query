@@ -150,7 +150,7 @@ CI 默认依次抓取的关键词列表（位于 workflow 中）：
 - Workflow 会 `git add 法规.csv 法规_mcp.jsonl mcp_backfill_state.json meta.json feed.xml` 并自动 commit & push，**请不要**让脚本写入其他需要提交的文件，除非同步更新 workflow。
 - 修改 workflow 里的自动提交步骤时，注意保留其中已配置的 `git config user.email / user.name`，不要随意替换 bot 身份。
 - `backfill_mcp.yml` 为**仅手动触发**的 MCP 历史回填 Action：用户在签到领取积分（约 10000 分/日）后触发，优先补当月缺漏、再倒序回填 `start_month` 起的历史月份（回填同样会融合更新 `法规.csv`，并重新生成 `feed.xml`）；`points_budget` 默认 `0`=不限（持续到积分耗尽，进度实时保存、下次续扫）；`refresh=true` 时忽略覆盖账本全月重扫（用于富化历史数据的富字段）。
-- 覆盖账本 `mcp_backfill_state.json`（v2，随仓库提交）记录每个 月份×关键词 已**确定覆盖**的日区间：日期 D 被覆盖 = 存在一次在 D 当日或之后执行且窗口包含 D 的成功扫描；每次 MCP 检索（含每日任务与手动 `--month`）成功后自动入账，回填只扫未覆盖的补集窗口。
+- 覆盖账本 `mcp_backfill_state.json`（v2，随仓库提交）记录每个 月份×关键词 已**确定覆盖**的日区间：日期 D 被覆盖 = 存在一次在 D 当日或之后执行且窗口包含 D 的成功扫描；每次 MCP 检索（含每日任务与手动 `--month`）成功后自动入账，回填只扫未覆盖的补集窗口。扫描因调用上限（`MCP_MAX_WINDOW_CALLS`）截断时，已完整解析的日区间即时入账、剩余补集窗口下次续扫，**不再整体中止**（避免单个高热组合永久阻塞后续关键词/月份）；单日命中 20 条上限时接受截断并记为已覆盖（服务端硬上限的固有损耗）。
 
 ## 9. 协作准则（给 AI 的硬性约束）
 

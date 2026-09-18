@@ -1167,7 +1167,8 @@ def _mcp_search_month(
     从整月窗口开始，凡命中 20 条上限（结果可能被截断）的窗口二分拆分后重查，
     最小粒度为天（单日超过 20 条时接受截断）。调用间隔 MCP_CALL_DELAY_S。
     max_calls 限制本月的最大调用次数（回填模式按剩余积分预算收紧）。
-    返回 (原始条目列表, 实际调用次数, 是否因 max_calls 截断而未查完)。"""
+    返回 (原始条目列表, 实际调用次数, 是否因 max_calls 截断而未查完, 已完整解析的日区间列表)。
+    已解析区间互不相交，且与剩余未查窗口的并集等于请求范围，可直接入覆盖账本。"""
     year, month = (int(part) for part in month_prefix.split("."))
     last_day = calendar.monthrange(year, month)[1]
     if day_end is None or day_end > last_day:
@@ -1176,6 +1177,7 @@ def _mcp_search_month(
     items: List[dict] = []
     calls = 0
     windows = [(day_start, day_end)]
+    covered: List[list] = []
     truncated = False
     while windows:
         if calls >= max_calls:
@@ -1197,10 +1199,14 @@ def _mcp_search_month(
             windows.append((mid + 1, day_end))
             print(f"DEBUG: {field} 窗口 {start_date}~{end_date} 命中上限 20 条，拆分后继续")
             continue
+        if len(data) >= 20:
+            # 单日仍命中上限：无法再拆，属服务端 20 条硬上限的固有损耗，接受截断
+            print(f"WARNING: {field} 单日 {start_date} 结果超过 20 条上限，已接受截断。")
         items.extend(data)
+        covered.append([day_start, day_end])
 
     print(f"MCP {field} 检索: 关键词 '{keyword}' 共 {calls} 次调用，返回 {len(items)} 条原始结果")
-    return items, calls, truncated
+    return items, calls, truncated, covered
 
 
 _MD_LINK_RE = re.compile(r"\[[^\]]*\]\((https?://[^)\s]+)\)")
@@ -1335,16 +1341,17 @@ def run_mcp(
         _mcp_handshake(token)
         title_items: List[dict] = []
         fulltext_items: List[dict] = []
-        truncated_segments = set()
+        covered_by_segment = {}
         for prefix, day_start, day_end in segments:
-            items, _, truncated = _mcp_search_month(
+            items, _, truncated, covered = _mcp_search_month(
                 token, keyword, prefix, "title", day_start=day_start, day_end=day_end,
             )
             title_items.extend(items)
+            covered_by_segment[prefix] = covered
             if truncated:
-                truncated_segments.add(prefix)
+                print(f"WARNING: 分段 {prefix} 标题检索被截断，按已解析日区间部分入账。")
             if fulltext:
-                items, _, _ = _mcp_search_month(
+                items, _, _, _ = _mcp_search_month(
                     token, keyword, prefix, "fulltext", day_start=day_start, day_end=day_end,
                 )
                 fulltext_items.extend(items)
@@ -1393,18 +1400,15 @@ def run_mcp(
         write_json(out_json, all_records)
 
     # 本次扫描的“确定覆盖”日区间并入覆盖账本，回填模式据此跳过已调研窗口；
-    # 标题检索被截断的分段不记账（存在未查窗口），留待回填补扫
+    # 截断分段按已解析的日区间部分入账，剩余补集窗口留待回填补扫
     coverage = _load_backfill_state(MCP_BACKFILL_STATE_PATH)
     recorded = False
     for prefix, day_start, day_end in segments:
-        if prefix in truncated_segments:
-            print(f"WARNING: 分段 {prefix} 标题检索被截断，本次不记入覆盖账本。")
-            continue
-        last_day = calendar.monthrange(*(int(p) for p in prefix.split(".")))[1]
-        iv = _definitive_interval(prefix, day_start, day_end or last_day, today)
-        if iv:
-            _record_coverage(coverage, prefix, keyword, [iv])
-            recorded = True
+        for s, e in covered_by_segment.get(prefix, []):
+            iv = _definitive_interval(prefix, s, e, today)
+            if iv:
+                _record_coverage(coverage, prefix, keyword, [iv])
+                recorded = True
     if recorded:
         _save_backfill_state(MCP_BACKFILL_STATE_PATH, coverage)
     return all_records
@@ -1597,7 +1601,7 @@ def run_mcp_backfill(
                     cap = MCP_MAX_WINDOW_CALLS
                 print(f"回填 {month_prefix} [{d1}-{d2}] 关键词 '{kw}'...")
                 try:
-                    title_items, calls, truncated = _mcp_search_month(
+                    title_items, calls, truncated, covered = _mcp_search_month(
                         token, kw, month_prefix, "title",
                         max_calls=cap, day_start=d1, day_end=d2,
                     )
@@ -1610,7 +1614,7 @@ def run_mcp_backfill(
                             remaining = budget_calls - calls_used
                             cap = min(MCP_MAX_WINDOW_CALLS, remaining)
                         if cap > 0:
-                            ft_items, calls, truncated = _mcp_search_month(
+                            ft_items, calls, _, _ = _mcp_search_month(
                                 token, kw, month_prefix, "fulltext",
                                 max_calls=cap, day_start=d1, day_end=d2,
                             )
@@ -1645,10 +1649,22 @@ def run_mcp_backfill(
                 records = deduplicate_records_by_title(title_sourced + fulltext_only)
 
                 if truncated:
-                    # 预算/上限导致该窗口未扫完：结果已落盘但不记进度，下次触发重扫补全
-                    print(f"WARNING: {month_prefix} [{d1}-{d2}] '{kw}' 未扫完，不记进度，留待下次续扫。")
-                    stop = True
-                    break
+                    # 调用上限导致该窗口未扫完：结果已落盘，已解析的日区间即时入账，
+                    # 剩余补集窗口由下次触发的 _complement_intervals 续扫（不再整体中止，
+                    # 避免单个高热组合永久阻塞后续关键词/月份）。
+                    partial = []
+                    for s, e in covered:
+                        iv = _definitive_interval(month_prefix, s, e, now)
+                        if iv:
+                            partial.append(iv)
+                    if partial:
+                        _record_coverage(coverage, month_prefix, kw, partial)
+                        _save_backfill_state(state_path, coverage)
+                    print(
+                        f"WARNING: {month_prefix} [{d1}-{d2}] '{kw}' 未扫完，"
+                        f"已入账 {len(partial)} 个已解析日区间，剩余窗口留待下次续扫。"
+                    )
+                    continue
                 iv = _definitive_interval(month_prefix, d1, d2, now)
                 if iv:
                     _record_coverage(coverage, month_prefix, kw, [iv])
