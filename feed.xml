@@ -5,7 +5,7 @@
     <link>https://youngfish42.github.io/law_query/</link>
     <description>AI、数智化、大模型等相关法规的最新更新订阅</description>
     <language>zh-CN</language>
-    <lastBuildDate>Tue, 29 Sep 2026 10:30:00 +0800</lastBuildDate>
+    <lastBuildDate>Wed, 30 Sep 2026 09:35:00 +0800</lastBuildDate>
     <ttl>1440</ttl>
     <atom:link href="https://youngfish42.github.io/law_query/feed.xml" rel="self" type="application/rss+xml" />
     <item>
@@ -30,6 +30,14 @@
       <description>分类：法律动态；公布日期：2026.09.18；制定机关：安徽省市场监管局</description>
       <guid isPermaLink="true">https://www.pkulaw.com/news/13884adf3224f42bbdfb.html?keyword=AI&amp;way=listView</guid>
       <category>法律动态</category>
+      <pubDate>Fri, 18 Sep 2026 00:00:00 +0800</pubDate>
+    </item>
+    <item>
+      <title>全国网络安全标准化技术委员会秘书处关于对《网络安全标准实践指南——智能体系统开发安全指南(征求意见稿)》公开征求意见的通知</title>
+      <link>https://www.pkulaw.com/protocol/e032fe3a8a295f36d3c3de975235ce49bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
+      <description>分类：立法资料；公布日期：2026.09.18；制定机关：全国网络安全标准化技术委员会；效力位阶：部门工作文件</description>
+      <guid isPermaLink="true">https://www.pkulaw.com/protocol/e032fe3a8a295f36d3c3de975235ce49bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
+      <category>立法资料</category>
       <pubDate>Fri, 18 Sep 2026 00:00:00 +0800</pubDate>
     </item>
     <item>
@@ -798,14 +806,6 @@
       <description>分类：法律动态；公布日期：2026.08.26；制定机关：全国网络安全标准化技术委员会</description>
       <guid isPermaLink="true">https://www.pkulaw.com/news/eb7de50822f78047bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
       <category>法律动态</category>
-      <pubDate>Wed, 26 Aug 2026 00:00:00 +0800</pubDate>
-    </item>
-    <item>
-      <title>民航局机场司关于公布北京泰豪智能工程有限公司等5家资质企业动态核查核定结论的通知</title>
-      <link>https://www.pkulaw.com/chl/323b9f65e96eb279bdfb.html</link>
-      <description>分类：中央法规；公布日期：2026.08.26；制定机关：其他机构；其他；各局(其他)；中国民用航空局；效力位阶：部门规章；部门工作文件；时效性：现行有效</description>
-      <guid isPermaLink="true">https://www.pkulaw.com/chl/323b9f65e96eb279bdfb.html</guid>
-      <category>中央法规</category>
       <pubDate>Wed, 26 Aug 2026 00:00:00 +0800</pubDate>
     </item>
   </channel>
